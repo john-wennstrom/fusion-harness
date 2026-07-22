@@ -27,13 +27,18 @@ set dotenv-load := true
 # Default prompts live in extensions/fusion-harness/{SYSTEM,USER}_PROMPT_*.md — edit to tune.
 # Sessions persist per project (/tmp/fusion-harness-sessions) — /fh-reset for fresh memories.
 
+# Builder provider — "openai" bills an API key, "openai-codex" draws on a ChatGPT
+# Plus/Pro subscription (run `pi`, then /login, and pick ChatGPT Plus/Pro (Codex)).
+# Switch without editing this file: put PI_OPENAI_PROVIDER=openai-codex in .env
+OPENAI_PROVIDER := env_var_or_default("PI_OPENAI_PROVIDER", "openai")
+
 # WORKHORSE tier — the cheap pair (sonnet-5 plans · terra builds + hosts). Use for testing.
 WORKHORSE_ARCHITECT := "anthropic/claude-sonnet-5"
-WORKHORSE_BUILDER := "openai/gpt-5.6-terra"
+WORKHORSE_BUILDER := OPENAI_PROVIDER + "/gpt-5.6-terra"
 
 # STATE-OF-THE-ART tier — the frontier, on-camera pair (fable 5 plans · sol builds + hosts).
 SOTA_ARCHITECT := "anthropic/claude-fable-5"
-SOTA_BUILDER := "openai/gpt-5.6-sol"
+SOTA_BUILDER := OPENAI_PROVIDER + "/gpt-5.6-sol"
 
 default:
     @just --list
