@@ -1,4 +1,8 @@
 set dotenv-load := true
+set windows-shell := ["pwsh.exe", "-NoLogo", "-NoProfile", "-Command"]
+
+# Prefer an optional user-local Node/pi toolchain on Windows.
+export PATH := if os() == "windows" { join(env_var_or_default("LOCALAPPDATA", ""), "fusion-node") + ";" + env_var("PATH") } else { env_var("PATH") }
 
 # Bare `just` lists every recipe (first recipe = default — keep this one on top).
 default:

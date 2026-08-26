@@ -312,9 +312,14 @@ export default function (pi: ExtensionAPI) {
 			const result = await pi.exec(invocation.command, invocation.args, { timeout: 30_000 });
 			if (result.code !== 0) throw new Error(`child model catalogue failed: ${result.stderr || result.stdout}`);
 			const models = new Set<string>();
-			for (const line of result.stdout.split("\n").slice(1)) {
-				const [provider, model] = line.trim().split(/\s+/);
-				if (provider && model) models.add(`${provider}/${model}`);
+			// pi.exec can route the child's table to stderr through the Windows bash shim.
+			// Require a size column so unrelated stderr output cannot enter the catalogue.
+			for (const line of `${result.stdout}\n${result.stderr}`.split("\n")) {
+				const columns = line.trim().split(/\s+/);
+				const [provider, model, context] = columns;
+				if (columns.length < 4 || !provider || !model || provider === "provider") continue;
+				if (!/^[\d.]+[KM]?$/.test(context ?? "")) continue;
+				models.add(`${provider}/${model}`);
 			}
 			return models;
 		})();
