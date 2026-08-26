@@ -43,6 +43,21 @@ fusion *ARGS:
 fusion5 *ARGS:
     just fh-stack .pi/fusion-harness/model-stack-fusion-5.yaml {{ARGS}}
 
+COPILOT_STACK := ".pi/fusion-harness/model-stack-copilot.yaml"
+
+# Cross-vendor trio billed to one GitHub Copilot subscription.
+fusion-copilot *ARGS:
+    just fh-stack {{COPILOT_STACK}} {{ARGS}}
+
+copilot-opinion PROMPT *ARGS:
+    bun run harness/cli.ts opinion --config {{COPILOT_STACK}} {{ARGS}} "{{PROMPT}}"
+
+copilot-debate PROMPT *ARGS:
+    bun run harness/cli.ts debate --config {{COPILOT_STACK}} {{ARGS}} "{{PROMPT}}"
+
+copilot-stack:
+    bun run harness/cli.ts stack --config {{COPILOT_STACK}}
+
 STACK := ".pi/fusion-harness/model-stack-fusion.yaml"
 
 # Headless read-only fan-out. No TUI, markdown to stdout.
