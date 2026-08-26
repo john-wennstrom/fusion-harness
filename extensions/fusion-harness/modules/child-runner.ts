@@ -17,6 +17,19 @@ const KILL_GRACE_MS = 5_000; // SIGTERM → SIGKILL escalation window
 
 /** Locate the running pi binary so we can re-invoke it as a child. */
 export function piInvocation(args: string[]): { command: string; args: string[] } {
+	// Headless hosts (the CLI / MCP server) are not pi, so argv[1] would recurse into
+	// themselves. FH_PI_INVOCATION is a JSON array: [command, ...prefixArgs].
+	const override = process.env.FH_PI_INVOCATION;
+	if (override) {
+		try {
+			const parsed = JSON.parse(override) as string[];
+			if (Array.isArray(parsed) && parsed.length && parsed.every((v) => typeof v === "string")) {
+				return { command: parsed[0], args: [...parsed.slice(1), ...args] };
+			}
+		} catch {
+			/* malformed override falls through to normal resolution */
+		}
+	}
 	const script = process.argv[1]; // the entry script pi itself was launched with
 	const isBunVirtual = script?.startsWith("/$bunfs/root/"); // bun-compiled binaries mount a virtual fs
 	// Best case: re-run the exact same entry script with the same runtime.

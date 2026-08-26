@@ -80,6 +80,37 @@ just fh-workhorse   # cheap pair · just fh-sota for the frontier pair
 
 The extension selects the configured primary builder as Pi's live host model. Invalid/unavailable stacks fail startup.
 
+## Headless read-only protocols
+
+`harness/` exposes opinion and debate without Pi's TUI. It reuses the extension's real child runner,
+model-stack loader and prompt contracts, so both entry points send the same prompts to the same
+clean-room children.
+
+```bash
+just stack
+just opinion "review this architecture"
+just debate "proposition to test" --rounds 3
+```
+
+The same protocols are available over MCP as `fusion_stack`, `fusion_opinion` and `fusion_debate`.
+Copy `.vscode/mcp.json.example` to `.vscode/mcp.json`, set `command` to an absolute Node 22.19+ path,
+then run the free transport check:
+
+```bash
+node harness/smoke-mcp.ts --stack-only
+```
+
+Omitting `--stack-only` adds one real opinion fan-out and costs one model request per configured slot.
+For user-profile MCP registration, use absolute entry/config paths and omit `cwd` and `FH_MCP_CWD`;
+the server requests the client's current workspace root on every call. `FH_MCP_CWD` remains available
+when the inspected directory must be fixed explicitly.
+
+Only the read-only protocols are exposed over MCP. Fusion and collaboration retain their CWD writer
+lease inside the extension, where an MCP client cannot become an unseen second writer. Child agents get
+only `read`, `grep`, `find` and `ls`, but those tools accept absolute paths and are not confined to the
+workspace. Use process-level isolation when inspecting untrusted repositories or repositories containing
+live credentials.
+
 ## Model stack configuration
 
 `--fh-config <path>` accepts an explicit YAML list with 2–5 slots:

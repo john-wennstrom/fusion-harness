@@ -1,0 +1,17 @@
+{
+  // Copy to .vscode/mcp.json and replace command with an absolute Node 22.19+ path.
+  // An absolute path avoids stale PATH values inherited when the editor started.
+  "servers": {
+    "fusion-harness": {
+      "type": "stdio",
+      "command": "/absolute/path/to/node",
+      "args": ["${workspaceFolder}/harness/mcp.ts"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "FH_MCP_CWD": "${workspaceFolder}",
+        "FH_MCP_CONFIG": "${workspaceFolder}/.pi/fusion-harness/model-stack-fusion.yaml",
+        "FH_MCP_TIMEOUT_S": "600"
+      }
+    }
+  }
+}

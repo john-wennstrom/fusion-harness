@@ -42,3 +42,21 @@ fusion *ARGS:
 # 5-slot fusion stack: fusion trio + fire=Kimi K3 + hawk=DeepSeek V4 Flash (both Fireworks)
 fusion5 *ARGS:
     just fh-stack .pi/fusion-harness/model-stack-fusion-5.yaml {{ARGS}}
+
+STACK := ".pi/fusion-harness/model-stack-fusion.yaml"
+
+# Headless read-only fan-out. No TUI, markdown to stdout.
+opinion PROMPT *ARGS:
+    bun run harness/cli.ts opinion --config {{STACK}} {{ARGS}} "{{PROMPT}}"
+
+# Headless N-way debate.
+debate PROMPT *ARGS:
+    bun run harness/cli.ts debate --config {{STACK}} {{ARGS}} "{{PROMPT}}"
+
+# Configured slots, without launching any models.
+stack:
+    bun run harness/cli.ts stack --config {{STACK}}
+
+# MCP stdio server; normally launched by the MCP client.
+mcp:
+    bun run harness/mcp.ts
