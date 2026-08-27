@@ -264,6 +264,10 @@ function parseToolList(raw: unknown, label: string, errors: string[]): string[] 
 			errors.push(`${label}[${index}] must not be empty`);
 			continue;
 		}
+		if (name.includes(",")) {
+			errors.push(`${label}[${index}] must not contain commas`);
+			continue;
+		}
 		if (seen.has(name)) {
 			errors.push(`${label} contains duplicate tool name ${JSON.stringify(name)}`);
 			continue;
