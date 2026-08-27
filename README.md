@@ -220,11 +220,10 @@ Do not use `just fusion` from the other project unless its `justfile` points to 
 Review the generated proposal, specs, design, and tasks before refining them. The normal lifecycle is:
 
 ```text
-/os-status <CHANGE>
+# Refine design and write tasks
 /refine <CHANGE>
 
-# Implement the revised design.md and tasks.md.
-/implement <CHANGE> next
+# Implement tasks.md.
 /implement <CHANGE> next
 
 # Or select a phase explicitly:
@@ -268,6 +267,8 @@ openspec validate <change> --strict
 openspec verify <change>
 openspec archive <change> -y
 ```
+
+If your OpenSpec CLI does not provide `verify`, Fusion Harness skips that step and continues with strict validation plus archive.
 
 If any gate fails, nothing is archived. Inspect the reported artifact or verification output, correct the change, and rerun the appropriate workflow command.
 

@@ -38,10 +38,19 @@ export class OpenSpecClient {
 		if (result.code !== 0) throw new Error(`openspec ${label} failed (exit ${result.code}):\n${result.output.trim()}`);
 		return result;
 	}
+	private static verifyCommandMissing(output: string): boolean {
+		return /unknown command ['"]verify['"]|unrecognized (?:sub)?command ['"]verify['"]|no such command ['"]verify['"]/i.test(output);
+	}
 	async status(change: string): Promise<any> { return parseJson((await this.command(["status", "--change", change, "--json"], "status")).output, "status"); }
 	async instructions(artifact: string, change: string): Promise<any> { return parseJson((await this.command(["instructions", artifact, "--change", change, "--json"], "instructions")).output, "instructions"); }
 	async validate(change: string): Promise<void> { await this.command(["validate", change, "--strict"], "strict validation"); }
 	async verify(change: string): Promise<void> { await this.command(["verify", change], "verification"); }
+	async verifyIfSupported(change: string): Promise<{ supported: boolean }> {
+		const result = await runProc("openspec", ["verify", change], this.cwd, 120_000, this.signal);
+		if (result.code === 0) return { supported: true };
+		if (OpenSpecClient.verifyCommandMissing(result.output)) return { supported: false };
+		throw new Error(`openspec verification failed (exit ${result.code}):\n${result.output.trim()}`);
+	}
 	async archive(change: string): Promise<void> { await this.command(["archive", change, "-y"], "archive"); }
 }
 
@@ -318,6 +327,19 @@ export function registerOpenSpecCommands(pi: ExtensionAPI, h: HarnessDeps): void
 	pi.registerCommand("ship", { description: "Verify and archive a completed OpenSpec change", handler: async (raw: any, ctx: any) => {
 		const change = (raw ?? "").trim().split(/\s+/)[0]; if (!change) return ctx.ui.notify("Usage: /ship <change>", "warning");
 		if (!requireOpenSpec(h, ctx, "ship", change)) return;
-		try { const client = clientFor(ctx); const artifact = resolveArtifact(await client.instructions("tasks", change), "tasks", ctx.cwd, change); const incomplete = parseTaskPlan(artifact.content ?? "").flatMap((phase) => phase.tasks).filter((task) => !task.checked); if (incomplete.length) throw new Error(`SHIP BLOCKED: unchecked tasks ${incomplete.map((task) => task.id).join(", ")}`); await client.validate(change); await client.verify(change); await client.archive(change); h.panel({ kind: "solo", command: "ship", ok: true, prompt: change }, `SHIP: ARCHIVED\n\n${change}`); } catch (error) { reportWorkflowError(h, ctx, "ship", change, error); }
+		try {
+			const client = clientFor(ctx);
+			const artifact = resolveArtifact(await client.instructions("tasks", change), "tasks", ctx.cwd, change);
+			const incomplete = parseTaskPlan(artifact.content ?? "").flatMap((phase) => phase.tasks).filter((task) => !task.checked);
+			if (incomplete.length) throw new Error(`SHIP BLOCKED: unchecked tasks ${incomplete.map((task) => task.id).join(", ")}`);
+			await client.validate(change);
+			const verification = await client.verifyIfSupported(change);
+			await client.archive(change);
+			h.panel({ kind: "solo", command: "ship", ok: true, prompt: change }, verification.supported
+				? `SHIP: ARCHIVED\n\n${change}`
+				: `SHIP: ARCHIVED\n\n${change}\n\nNote: this OpenSpec version does not support \`verify\`; archive proceeded after strict validation.`);
+		} catch (error) {
+			reportWorkflowError(h, ctx, "ship", change, error);
+		}
 	}});
 }
