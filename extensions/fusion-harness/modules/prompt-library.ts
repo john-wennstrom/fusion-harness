@@ -52,7 +52,10 @@ export function contractSystemPrompt(base: string | undefined, contractFile: str
 /** A stable, explicit roster injected into every N-agent protocol. */
 export function rosterText(stack: ModelStack): string {
 	return orderedSlots(stack)
-		.map((slot) => `- [${slot.name.toUpperCase()}] ${slot.architect ? "ARCHITECT" : slot.primary ? "BUILDER (Main)" : "BUILDER"} · ${slot.model} · thinking=${slot.thinking}`)
+		.map((slot) => {
+			const role = slot.architect ? "ARCHITECT" : slot.primary ? "BUILDER (Main)" : "BUILDER";
+			return `- [${slot.name.toUpperCase()}] ${role} · ${slot.model} · thinking=${slot.thinking}`;
+		})
 		.join("\n");
 }
 

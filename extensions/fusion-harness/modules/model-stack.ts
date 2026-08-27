@@ -5,6 +5,22 @@ import { parse as parseYaml } from "yaml";
 export type Thinking = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type HexColor = `#${string}`;
 
+export interface ChildToolRule {
+	inherit?: boolean;
+	include?: string[];
+	exclude?: string[];
+}
+
+export interface ChildToolConfig {
+	read?: string[] | ChildToolRule;
+	write?: string[] | ChildToolRule;
+}
+
+export interface ChildConfig {
+	extensions?: string[];
+	tools?: ChildToolConfig;
+}
+
 export interface ModelSlot {
 	id: string;
 	name: string;
@@ -23,11 +39,13 @@ export interface ModelSlot {
 	 * inline text or a file path relative to the YAML.
 	 */
 	appendSystemPrompts: string[];
+	child?: ChildConfig;
 }
 
 export interface ModelStack {
 	codename: string;
 	configPath?: string;
+	child?: ChildConfig;
 	slots: ModelSlot[];
 	architect: ModelSlot;
 	primaryBuilder: ModelSlot;
@@ -108,6 +126,154 @@ function codenameFromPath(configPath: string): string {
 	return base.replace(/^model-stack-/, "") || "stack";
 }
 
+function parseChildExtensions(raw: unknown, configDir: string, label: string, errors: string[]): string[] | undefined {
+	if (raw === undefined) return undefined;
+	if (!Array.isArray(raw)) {
+		errors.push(`${label}.extensions must be an array of extension sources`);
+		return undefined;
+	}
+	const extensions: string[] = [];
+	for (let index = 0; index < raw.length; index++) {
+		const entry = raw[index];
+		if (typeof entry !== "string") {
+			errors.push(`${label}.extensions[${index}] must be a string`);
+			continue;
+		}
+		const normalized = normalizeExtensionSource(entry.trim(), configDir);
+		if (!normalized) {
+			errors.push(`${label}.extensions[${index}] must not be empty`);
+			continue;
+		}
+		extensions.push(normalized);
+	}
+	return extensions;
+}
+
+function parseChildTools(raw: unknown, label: string, errors: string[]): ChildToolConfig | undefined {
+	if (raw === undefined) return undefined;
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+		errors.push(`${label}.tools must be a mapping`);
+		return undefined;
+	}
+	const toolsValue = raw as Record<string, unknown>;
+	const allowedToolKeys = new Set(["read", "write"]);
+	for (const key of Object.keys(toolsValue)) {
+		if (!allowedToolKeys.has(key)) errors.push(`${label}.tools contains unknown key ${JSON.stringify(key)}`);
+	}
+	const read = parseToolEntry(toolsValue.read, `${label}.tools.read`, errors);
+	const write = parseToolEntry(toolsValue.write, `${label}.tools.write`, errors);
+	if (read === undefined && write === undefined) return undefined;
+
+	const readList = explicitIncludes(read);
+	const writeList = explicitIncludes(write);
+	for (const name of readList) {
+		if (writeList.includes(name)) errors.push(`${label}.tools declares ${JSON.stringify(name)} as both read and write`);
+	}
+
+	const tools: ChildToolConfig = {};
+	if (read !== undefined) tools.read = read;
+	if (write !== undefined) tools.write = write;
+	return tools;
+}
+
+function parseToolEntry(raw: unknown, label: string, errors: string[]): string[] | ChildToolRule | undefined {
+	if (raw === undefined) return undefined;
+	if (Array.isArray(raw)) return parseToolList(raw, label, errors);
+	if (!raw || typeof raw !== "object") {
+		errors.push(`${label} must be an array of tool names or a mapping with include/exclude`);
+		return undefined;
+	}
+	const value = raw as Record<string, unknown>;
+	const allowedKeys = new Set(["inherit", "include", "exclude"]);
+	for (const key of Object.keys(value)) if (!allowedKeys.has(key)) errors.push(`${label} contains unknown key ${JSON.stringify(key)}`);
+
+	let inherit: boolean | undefined;
+	if (value.inherit !== undefined) {
+		if (typeof value.inherit !== "boolean") errors.push(`${label}.inherit must be boolean`);
+		else inherit = value.inherit;
+	}
+	const include = parseToolList(value.include, `${label}.include`, errors);
+	const exclude = parseToolList(value.exclude, `${label}.exclude`, errors);
+	if (include === undefined && exclude === undefined && inherit === undefined) {
+		errors.push(`${label} object must set at least one of inherit/include/exclude`);
+		return undefined;
+	}
+
+	const includeList = include ?? [];
+	const excludeList = exclude ?? [];
+	for (const name of includeList) {
+		if (excludeList.includes(name)) errors.push(`${label} includes and excludes ${JSON.stringify(name)}`);
+	}
+
+	const rule: ChildToolRule = {};
+	if (inherit !== undefined) rule.inherit = inherit;
+	if (include !== undefined) rule.include = include;
+	if (exclude !== undefined) rule.exclude = exclude;
+	return rule;
+}
+
+function explicitIncludes(value: string[] | ChildToolRule | undefined): string[] {
+	if (!value) return [];
+	if (Array.isArray(value)) return value;
+	return value.include ?? [];
+}
+
+function parseChildConfig(raw: unknown, configDir: string, label: string, errors: string[]): ChildConfig | undefined {
+	if (raw === undefined || raw === null) return undefined;
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+		errors.push(`${label} must be a mapping`);
+		return undefined;
+	}
+	const value = raw as Record<string, unknown>;
+	const allowedKeys = new Set(["extensions", "tools"]);
+	for (const key of Object.keys(value)) if (!allowedKeys.has(key)) errors.push(`${label} contains unknown key ${JSON.stringify(key)}`);
+
+	const extensions = parseChildExtensions(value.extensions, configDir, label, errors);
+	const tools = parseChildTools(value.tools, label, errors);
+
+	const config: ChildConfig = {};
+	if (extensions !== undefined) config.extensions = extensions;
+	if (tools !== undefined) config.tools = tools;
+	return config;
+}
+
+function normalizeExtensionSource(source: string, configDir: string): string {
+	if (!source) return "";
+	if (source.startsWith("npm:") || source.startsWith("git:")) return source;
+	if (path.isAbsolute(source)) return source;
+	if (source.startsWith("./") || source.startsWith("../")) return path.resolve(configDir, source);
+	return source;
+}
+
+function parseToolList(raw: unknown, label: string, errors: string[]): string[] | undefined {
+	if (raw === undefined) return undefined;
+	if (!Array.isArray(raw)) {
+		errors.push(`${label} must be an array of tool names`);
+		return undefined;
+	}
+	const names: string[] = [];
+	const seen = new Set<string>();
+	for (let index = 0; index < raw.length; index++) {
+		const entry = raw[index];
+		if (typeof entry !== "string") {
+			errors.push(`${label}[${index}] must be a string`);
+			continue;
+		}
+		const name = entry.trim();
+		if (!name) {
+			errors.push(`${label}[${index}] must not be empty`);
+			continue;
+		}
+		if (seen.has(name)) {
+			errors.push(`${label} contains duplicate tool name ${JSON.stringify(name)}`);
+			continue;
+		}
+		seen.add(name);
+		names.push(name);
+	}
+	return names;
+}
+
 export function loadModelStack(configPathInput: string): ModelStack {
 	const configPath = path.resolve(configPathInput);
 	let source: string;
@@ -125,10 +291,25 @@ export function loadModelStack(configPathInput: string): ModelStack {
 	}
 
 	const errors: string[] = [];
-	if (!Array.isArray(parsed)) {
-		throw new Error(`fusion-harness: model-stack config invalid (${configPath}):\n- top-level YAML value must be a list of model slots`);
+	let globalChild: ChildConfig | undefined;
+	let slotEntries: unknown[];
+	if (Array.isArray(parsed)) {
+		slotEntries = parsed;
+	} else if (parsed && typeof parsed === "object") {
+		const top = parsed as Record<string, unknown>;
+		const allowedTopKeys = new Set(["child", "slots"]);
+		for (const key of Object.keys(top)) if (!allowedTopKeys.has(key)) errors.push(`top-level object contains unknown key ${JSON.stringify(key)}`);
+		globalChild = parseChildConfig(top.child, path.dirname(configPath), "child", errors);
+		if (!Array.isArray(top.slots)) {
+			errors.push("top-level object field slots must be a list of model slots");
+			slotEntries = [];
+		} else {
+			slotEntries = top.slots;
+		}
+	} else {
+		throw new Error(`fusion-harness: model-stack config invalid (${configPath}):\n- top-level YAML value must be a list of model slots or an object with slots`);
 	}
-	if (parsed.length < 2 || parsed.length > 5) errors.push(`slot count must be between 2 and 5; found ${parsed.length}`);
+	if (slotEntries.length < 2 || slotEntries.length > 5) errors.push(`slot count must be between 2 and 5; found ${slotEntries.length}`);
 
 	const codename = codenameFromPath(configPath);
 	const configDir = path.dirname(configPath);
@@ -136,15 +317,15 @@ export function loadModelStack(configPathInput: string): ModelStack {
 	const names = new Set<string>();
 	const ids = new Set<string>();
 
-	for (let index = 0; index < parsed.length; index++) {
-		const raw = parsed[index];
+	for (let index = 0; index < slotEntries.length; index++) {
+		const raw = slotEntries[index];
 		const label = `slot[${index}]`;
 		if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
 			errors.push(`${label} must be a mapping`);
 			continue;
 		}
 		const value = raw as Record<string, unknown>;
-		const allowedKeys = new Set(["name", "model", "thinking", "color", "architect", "primary", "system_prompt", "append_system_prompt"]);
+		const allowedKeys = new Set(["name", "model", "thinking", "color", "architect", "primary", "system_prompt", "append_system_prompt", "child"]);
 		for (const key of Object.keys(value)) if (!allowedKeys.has(key)) errors.push(`${label} contains unknown key ${JSON.stringify(key)}`);
 		const name = typeof value.name === "string" ? value.name.trim() : "";
 		if (!SLOT_NAME_RE.test(name)) errors.push(`${label}.name must match [A-Za-z0-9_-]+ and be 1-16 characters; found ${JSON.stringify(value.name)}`);
@@ -185,6 +366,7 @@ export function loadModelStack(configPathInput: string): ModelStack {
 				if (resolved.text?.trim()) appendSystemPrompts.push(resolved.text);
 			}
 		}
+		const child = parseChildConfig(value.child, configDir, `${label}.child`, errors);
 		drafts.push({
 			id,
 			name: name || `slot-${index + 1}`,
@@ -195,6 +377,7 @@ export function loadModelStack(configPathInput: string): ModelStack {
 			systemPrompt: prompt.text,
 			systemPromptSource: prompt.source,
 			appendSystemPrompts,
+			child,
 			color,
 		});
 	}
@@ -232,7 +415,7 @@ export function loadModelStack(configPathInput: string): ModelStack {
 	const architect = slots.find((slot) => slot.architect)!;
 	const stackBuilders = slots.filter((slot) => !slot.architect);
 	const primaryBuilder = stackBuilders.find((slot) => slot.primary)!;
-	return { codename, configPath, slots, architect, primaryBuilder, builders: stackBuilders };
+	return { codename, configPath, child: globalChild, slots, architect, primaryBuilder, builders: stackBuilders };
 }
 
 export function synthesizeLegacyStack(options: LegacyStackOptions): ModelStack {
@@ -246,6 +429,7 @@ export function synthesizeLegacyStack(options: LegacyStackOptions): ModelStack {
 		primary: false,
 		systemPrompt: options.architectSystemPrompt,
 		appendSystemPrompts: [],
+		child: undefined,
 	};
 	const primaryBuilder: ModelSlot = {
 		id: "main",
@@ -257,6 +441,7 @@ export function synthesizeLegacyStack(options: LegacyStackOptions): ModelStack {
 		primary: true,
 		systemPrompt: options.builderSystemPrompt,
 		appendSystemPrompts: [],
+		child: undefined,
 	};
 	return { codename: "legacy", slots: [architect, primaryBuilder], architect, primaryBuilder, builders: [primaryBuilder] };
 }
@@ -266,8 +451,51 @@ export function orderedSlots(stack: ModelStack): ModelSlot[] {
 }
 
 export function cloneStack(stack: ModelStack): ModelStack {
-	const slots = stack.slots.map((slot) => ({ ...slot, appendSystemPrompts: [...slot.appendSystemPrompts] }));
+	const cloneToolEntry = (entry: string[] | ChildToolRule | undefined): string[] | ChildToolRule | undefined => {
+		if (entry === undefined) return undefined;
+		if (Array.isArray(entry)) return [...entry];
+		return {
+			inherit: entry.inherit,
+			include: entry.include ? [...entry.include] : undefined,
+			exclude: entry.exclude ? [...entry.exclude] : undefined,
+		};
+	};
+
+	const slots = stack.slots.map((slot) => ({
+		...slot,
+		appendSystemPrompts: [...slot.appendSystemPrompts],
+		child: slot.child
+			? {
+				...slot.child,
+				extensions: slot.child.extensions ? [...slot.child.extensions] : undefined,
+				tools: slot.child.tools
+					? {
+						read: cloneToolEntry(slot.child.tools.read),
+						write: cloneToolEntry(slot.child.tools.write),
+					}
+					: undefined,
+			}
+			: undefined,
+	}));
 	const architect = slots.find((slot) => slot.id === stack.architect.id)!;
 	const primaryBuilder = slots.find((slot) => slot.id === stack.primaryBuilder.id)!;
-	return { ...stack, slots, architect, primaryBuilder, builders: slots.filter((slot) => !slot.architect) };
+	return {
+		...stack,
+		child: stack.child
+			? {
+				...stack.child,
+				extensions: stack.child.extensions ? [...stack.child.extensions] : undefined,
+				tools: stack.child.tools
+					? {
+						read: cloneToolEntry(stack.child.tools.read),
+						write: cloneToolEntry(stack.child.tools.write),
+					}
+					: undefined,
+			}
+			: undefined,
+		slots,
+		architect,
+		primaryBuilder,
+		builders: slots.filter((slot) => !slot.architect),
+	};
 }

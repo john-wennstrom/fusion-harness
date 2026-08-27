@@ -35,9 +35,10 @@ describe("orchestration contracts", () => {
 
   test("fusion has read-only sources, one full-tool fuser, and no-tools ACKs", () => {
     expect(source).toContain("prompt: workerPrompt(slot, stack, prompt)");
-    expect(source).toContain("tools: READONLY_TOOLS");
+    expect(source).toContain('access: "read"');
     expect(source).toContain('SYSTEM_PROMPT_FUSION.md');
-    expect(source).toContain('tools: "none"');
+    expect(source).toContain('access: "none"');
+    expect(source).toContain('h.resolveChildRuntime(slot, "none")');
     expect(source).toContain('splitUtf8(fuser.text, 80_000)');
     expect(source).toContain('display: false');
     expect(source).toContain("ACK FUSION ${runId}");
@@ -63,7 +64,8 @@ describe("orchestration contracts", () => {
     expect(source).toContain("maxConcurrentWriteEnabledChildren");
     expect(source).toContain("acquireWriterLease(ctx.cwd, `/fh-collaborate");
     expect(source).toContain("parseStrictJsonObject(architectRun.text");
-    expect(source).toContain("tools: READONLY_TOOLS");
+    expect(source).toContain('access: "read"');
+    expect(source).toContain('access: "write"');
     expect(source).toContain("worktreeCommandsObserved");
     expect(prompt("USER_PROMPT_COLLAB_EXECUTE.md")).toContain("one shared working directory");
     expect(prompt("SYSTEM_PROMPT_COLLAB_COORDINATOR.md")).toContain("at most one write-enabled child");
@@ -88,6 +90,13 @@ describe("orchestration contracts", () => {
     expect(source).toContain('args.push("--append-system-prompt", append)');
     expect(source).toContain("appendSystemPrompts: slot.appendSystemPrompts");
     expect(source).toContain("appendSystemPrompts: stack.architect.appendSystemPrompts");
+  });
+
+  test("child access is resolved centrally", () => {
+    expect(source).toContain("resolveChildRuntime(stack: ModelStack, slot: ModelSlot, access: ChildAccess)");
+    expect(source).toContain('if (access === "none") return { extensions: [], tools: [] }');
+    expect(source).toContain('for (const extension of runtime.extensions) args.push("-e", resolveChildExtensionSource(extension))');
+    expect(source).toContain('if (opts.access === "none") args.push("--no-tools")');
   });
 
   test("session identities hash full model and project paths", () => {
