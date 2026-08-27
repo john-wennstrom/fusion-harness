@@ -4,6 +4,11 @@ set dotenv-load := true
 default:
     @just --list
 
+# Builder provider — "openai" bills an API key, "openai-codex" draws on a ChatGPT
+# Plus/Pro subscription (run `pi`, then /login, and pick ChatGPT Plus/Pro (Codex)).
+# Switch without editing this file: put PI_OPENAI_PROVIDER=openai-codex in .env
+OPENAI_PROVIDER := env_var_or_default("PI_OPENAI_PROVIDER", "openai")
+
 # fusion-harness — 2-5 configured agents, AND not OR.
 WORKHORSE_ARCHITECT := "anthropic/claude-sonnet-5"
 WORKHORSE_BUILDER := "openai/gpt-5.6-terra"
