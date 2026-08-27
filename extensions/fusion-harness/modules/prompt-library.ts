@@ -292,6 +292,26 @@ export function collabCoordinatePrompt(prompt: string, reportsDir: string, planP
 	return fill("USER_PROMPT_COLLAB_COORDINATE.md", { REPORTS_DIR: reportsDir, PLAN_PATH: planPath, PROMPT: prompt });
 }
 
+export function openSpecDebatePrompt(change: string, context: string): string {
+	return fill("USER_PROMPT_OPENSPEC_DEBATE.md", { CHANGE: change, CONTEXT: context });
+}
+
+export function openSpecArtifactPrompt(change: string, artifact: string, instruction: string, context: string): string {
+	return fill("USER_PROMPT_OPENSPEC_ARTIFACT.md", { CHANGE: change, ARTIFACT: artifact, INSTRUCTION: instruction, CONTEXT: context });
+}
+
+export function openSpecImplementPrompt(change: string, phase: number, phaseTitle: string, tasks: string): string {
+	return fill("USER_PROMPT_OPENSPEC_IMPLEMENT.md", { CHANGE: change, PHASE: String(phase), PHASE_TITLE: phaseTitle, TASKS: tasks });
+}
+
+export function openSpecDesignPrompt(change: string, context: string, debate: string): string {
+	return fill("USER_PROMPT_OPENSPEC_DESIGN.md", { CHANGE: change, CONTEXT: context, DEBATE: debate });
+}
+
+export function openSpecTasksPrompt(change: string, context: string, design: string): string {
+	return fill("USER_PROMPT_OPENSPEC_TASKS.md", { CHANGE: change, CONTEXT: context, DESIGN: design });
+}
+
 // ═══ Strict-output parsing ═══════════════════════════════════════════════════
 
 export function parseStrictJsonObject(text: string, label: string): Record<string, unknown> {

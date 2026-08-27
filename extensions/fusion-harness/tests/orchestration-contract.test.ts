@@ -26,12 +26,22 @@ describe("orchestration contracts", () => {
   });
 
   test("registers target commands and deletes unsafe/obsolete commands", () => {
-    for (const command of ["fh", "fh-model", "fh-only", "fh-opinion", "fh-fusion", "fh-debate", "fh-collaborate", "fh-auto-validate", "fh-system-prompt", "fh-reset"]) {
+    for (const command of ["fh", "fh-model", "fh-only", "fh-opinion", "fh-fusion", "fh-debate", "fh-collaborate", "fh-auto-validate", "os-status", "refine", "implement", "ship", "fh-system-prompt", "fh-reset"]) {
       expect(source).toContain(`registerCommand("${command}"`);
     }
     expect(source).not.toContain('registerCommand("fh-both"');
     expect(source).not.toContain('registerCommand("fh-thinking"');
     expect(source).not.toContain('registerCommand("fh-fusion-only"');
+  });
+
+  test("keeps OpenSpec integration optional", () => {
+    expect(source).toContain("isOpenSpecAvailable");
+    expect(source).toContain("registerOpenSpecCommands(pi, deps)");
+    expect(source).toContain("requireOpenSpec");
+    expect(source).toContain("reportWorkflowError");
+    expect(source).toContain("${command.toUpperCase()}: BLOCKED");
+    expect(source).toContain('setStatus("fusion-harness", `refine: loading OpenSpec change');
+    expect(source).toContain('startGridWidget(ctx, "refine"');
   });
 
   test("fusion has read-only sources, one full-tool fuser, and no-tools ACKs", () => {

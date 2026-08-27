@@ -33,7 +33,7 @@ The `/install` command lives at `.claude/commands/install.md` and handles toolch
 
 ### Manual Install
 
-**Prereqs:** [`pi`](https://pi.dev/), [`just`](https://github.com/casey/just), [`bun`](https://bun.sh), `jq`, [`uv`](https://github.com/astral-sh/uv).
+**Prereqs:** [`pi`](https://pi.dev/), [`just`](https://github.com/casey/just), [`bun`](https://bun.sh), `jq`, and [`uv`](https://github.com/astral-sh/uv). The `openspec` CLI is optional and must be on `PATH` only when using the OpenSpec workflow commands.
 
 ```bash
 npm install -g @earendil-works/pi-coding-agent   # the pi coding agent
@@ -187,12 +187,91 @@ No config auto-discovery occurs; `--fh-config` is explicit.
 | `/fh-only [slot] [prompt]` | Address one slot directly. Without a prompt it arms the next plain input as a one-send route; selecting the armed slot again disarms it. |
 | `/fh-model` | Three-step picker: slot → model → thinking. Session-only; never rewrites YAML. Main applies both `pi.setModel()` and `pi.setThinkingLevel()` to raw chat. |
 | `/fh-auto-validate <prompt>` | Existing gate-first ARCHITECT + Main build loop. |
+| `/os-status <change>` | Show OpenSpec status plus checked/unchecked task counts by phase. |
+| `/refine <change> [--allow-open]` | Run a read-only multi-model design review, synthesize `design.md` and `tasks.md`, write them through the host, then run `openspec validate --strict`. Blocks task generation when the revised design contains open questions unless `--allow-open` is supplied. |
+| `/implement <change> [next\|phase]` | Select the first phase containing unchecked tasks, or an explicit phase, ask the primary builder to implement it, run each task's `Verify command`, check tasks off only after those commands pass, and strict-validate again. |
+| `/ship <change>` | Refuse to archive while tasks are unchecked; otherwise run strict validation and OpenSpec verification before `openspec archive <change> -y`. |
 | `/fh-system-prompt` | Responsive grid of every slot's effective system prompt. |
 | `/fh-reset` | Full reset: fresh host session and fresh slot sessions — equivalent to `/new` plus a slot wipe. |
 
 <p align="center">
   <img src="images/svg-07-opinion-grid-animated.svg" alt="/fh-opinion — every configured model answers read-only, rendered side by side" width="750">
 </p>
+
+## OpenSpec workflow
+
+OpenSpec owns the change artifacts and lifecycle state. Fusion Harness supplies the adversarial review and implementation agents. Pi runs the workflow commands in the current project directory.
+
+Fusion Harness always registers `/os-status`, `/refine`, `/implement`, and `/ship`, but checks for the `openspec` executable when one of them is invoked. Without it, the selected workflow is blocked with a visible error and the rest of Fusion Harness remains available. This lazy check also supports OpenSpec installed after Pi starts and alternate workspace launch environments. Start Pi with the Fusion Harness extension as usual, then create or inspect a change with OpenSpec's native commands:
+
+When working in a different project such as `../mind`, load this extension using a path relative to that project or an absolute path. OpenSpec operates on Pi's current workspace (`ctx.cwd`):
+
+```bash
+cd ../mind
+pi -e ../fusion-harness/extensions/fusion-harness/fusion-harness.ts
+```
+
+Do not use `just fusion` from the other project unless its `justfile` points to this extension; that recipe is defined in the Fusion Harness repository.
+
+```text
+/opsx-propose <CHANGE>
+```
+
+Review the generated proposal, specs, design, and tasks before refining them. The normal lifecycle is:
+
+```text
+/os-status <CHANGE>
+/refine <CHANGE>
+
+# Review the revised design.md and tasks.md.
+/implement <CHANGE> next
+/implement <CHANGE> next
+
+# Or select a phase explicitly:
+/implement <CHANGE> 3
+
+/ship <CHANGE>
+```
+
+The change name must already exist in the current project. If it does not, create it first with `/opsx-propose <change>` or `openspec new change <change>`. Workflow preflight failures are shown as a `*_BLOCKED` panel with the OpenSpec error; they do not start agents.
+
+### `/os-status`
+
+`/os-status <change>` calls `openspec status --change <change> --json` and loads the task artifact through `openspec instructions tasks --change <change> --json`. It displays the raw OpenSpec status and the checked-task count for each parsed phase.
+
+### `/refine`
+
+`/refine <change>` performs these steps:
+
+1. Preflight the change with OpenSpec status and artifact instructions.
+2. Send the proposal, specs, and planning artifacts to every configured slot in read-only mode for an adversarial review.
+3. Ask the architect to return complete replacement content for `design.md`, then write it atomically from the host process.
+4. Ask the architect to derive complete replacement content for `tasks.md`, then write it atomically from the host process.
+5. Run `openspec validate <change> --strict`.
+
+The refinement agents cannot write the checkout. The host owns the exact artifact writes. If the revised design contains an `Open Questions` section, refinement stops before task generation and reports `REFINE: NEEDS REVIEW`. Manually resolve the question in the design and rerun `/refine`, or use `/refine <change> --allow-open` when continuing with open questions is intentional.
+
+### `/implement`
+
+`/implement <change>` selects the first phase containing an unchecked task. `/implement <change> next` is equivalent. `/implement <change> <number>` selects a specific phase for retries or debugging; phase numbers remain an outer dependency barrier.
+
+The primary builder receives only the selected phase's unchecked tasks, including their Requirement, Scenario, and Verify command metadata when present. The builder is instructed not to edit task checkboxes. After the builder exits, the host runs every `Verify command` found for the phase. A task is changed from `- [ ]` to `- [x]` only when all listed commands pass. A failed command leaves the task unchecked and prevents the success report. Strict OpenSpec validation runs again after successful checkoffs.
+
+Tasks without a `Verify command` are currently implemented without an executable task-level check; use scenario references and project tests in the task plan whenever possible.
+
+### `/ship`
+
+`/ship <change>` is the archive gate. It first refuses the operation if any parsed task is unchecked, then runs:
+
+```bash
+openspec validate <change> --strict
+openspec verify <change>
+openspec archive <change> -y
+```
+
+If any gate fails, nothing is archived. Inspect the reported artifact or verification output, correct the change, and rerun the appropriate workflow command.
+
+The current first version uses the primary builder for `/implement`. It does not yet route a selected phase through `/fh-collaborate`'s internal delegation DAG or provide model-based verification for scenario-only tasks; those are separate future extensions.
 
 ## Single-writer invariant
 
@@ -311,13 +390,15 @@ extensions/fusion-harness/
 │   ├── model-stack.ts         # YAML parsing, validation, colors, legacy synthesis
 │   ├── agent-layout.ts        # responsive 1-5 agent layout math
 │   ├── collaboration-graph.ts # DAG validation, cycle detection, dependency levels
+  │   ├── openspec-workflow.ts    # OpenSpec client, artifact parsing, refine/implement/ship
 │   └── writer-lease.ts        # atomic canonical-CWD writer exclusion
-├── prompts/                   # SYSTEM_PROMPT_*.md / USER_PROMPT_*.md — edit files, not code
+  ├── prompts/                   # SYSTEM_PROMPT_*.md / USER_PROMPT_*.md — edit files, not code
 └── tests/                     # parser, graph, and orchestration-invariant tests
 ```
 
 - `fusion-harness.ts` — the extension factory: flags/config, stack resolution, host selection, persistent slot sessions, widgets/model bar, panel plumbing, and the small in-place commands (`/fh`, `/fh-model`, `/fh-only`, `/fh-system-prompt`, `/fh-reset`).
 - `modules/runtime.ts` — shared types (AgentRun, AgentStat, FhDetails), role glyphs/colors, tool allowlists, formatting helpers, and the `HarnessDeps` seam the command modules run through.
+- `modules/openspec-workflow.ts` — OpenSpec CLI integration, artifact-path resolution, task-plan parsing, read-only debate/artifact synthesis, host-controlled writes, verification-gated checkoffs, and `/os-status`, `/refine`, `/implement`, `/ship`.
 - `modules/child-runner.ts` — clean-room `pi --mode json -p` child processes with JSON-event streaming and close-aware SIGTERM→SIGKILL process-tree escalation.
 - `modules/prompt-library.ts` — every model contract, built from `prompts/SYSTEM_PROMPT_*.md` / `prompts/USER_PROMPT_*.md` templates, plus strict-output parsing.
 - `modules/tui.ts` — TwoCol/AgentGrid/FullWidth layout primitives, labels, live streaming columns, and the transcript panel renderer.

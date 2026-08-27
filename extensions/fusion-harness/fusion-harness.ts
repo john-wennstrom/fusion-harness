@@ -48,6 +48,7 @@ import { Container, Text, matchesKey, truncateToWidth, visibleWidth } from "@ear
 import { registerAutoValidateCommand, registerCollaborateCommand } from "./modules/cmd-build.ts";
 import { registerFusionCommand } from "./modules/cmd-fusion.ts";
 import { registerReadonlyCommands } from "./modules/cmd-readonly.ts";
+import { registerOpenSpecCommands } from "./modules/openspec-workflow.ts";
 import { piInvocation, runChild } from "./modules/child-runner.ts";
 import {
 	cloneStack,
@@ -1290,4 +1291,5 @@ export default function (pi: ExtensionAPI) {
 	registerFusionCommand(pi, deps); // /fh-fusion
 	registerCollaborateCommand(pi, deps); // /fh-collaborate
 	registerAutoValidateCommand(pi, deps); // /fh-auto-validate
+	registerOpenSpecCommands(pi, deps); // optional /refine + /implement + /os-status + /ship
 }
