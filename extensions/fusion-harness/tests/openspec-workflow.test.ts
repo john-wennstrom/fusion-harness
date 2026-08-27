@@ -9,8 +9,9 @@ describe("OpenSpec workflow parsing", () => {
 		expect(phases[1].tasks[0]).toMatchObject({ id: "2.1", checked: false, phaseTitle: "Integration" });
 	});
 
-	test("uses an OpenSpec-provided artifact path before the compatibility fallback", () => {
+	test("always writes artifacts inside the OpenSpec change directory", () => {
 		const artifact = resolveArtifact({ contextFiles: { design: { outputPath: "custom/design.md" } } }, "design", "/tmp/project", "example");
-		expect(artifact.path).toBe("/tmp/project/custom/design.md");
+		expect(artifact.path).toBe("/tmp/project/openspec/changes/example/design.md");
+		expect(artifact.contextFiles).toContain("/tmp/project/custom/design.md");
 	});
 });

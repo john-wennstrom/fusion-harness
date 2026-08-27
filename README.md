@@ -249,7 +249,7 @@ The change name must already exist in the current project. If it does not, creat
 4. Ask the architect to derive complete replacement content for `tasks.md`, then write it atomically from the host process.
 5. Run `openspec validate <change> --strict`.
 
-The refinement agents cannot write the checkout. The host owns the exact artifact writes. If the revised design contains an `Open Questions` section, refinement stops before task generation and reports `REFINE: NEEDS REVIEW`. Manually resolve the question in the design and rerun `/refine`, or use `/refine <change> --allow-open` when continuing with open questions is intentional.
+The refinement agents cannot write the checkout. The host owns the exact artifact writes, and always writes to `openspec/changes/<change>/design.md` and `openspec/changes/<change>/tasks.md`; paths returned as context by OpenSpec are never used as write targets. If the revised design contains an `Open Questions` section, refinement stops before task generation and reports `REFINE: NEEDS REVIEW`. Manually resolve the question in the design and rerun `/refine`, or use `/refine <change> --allow-open` when continuing with open questions is intentional.
 
 ### `/implement`
 

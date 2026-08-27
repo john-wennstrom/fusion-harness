@@ -42,6 +42,10 @@ describe("orchestration contracts", () => {
     expect(source).toContain("${command.toUpperCase()}: BLOCKED");
     expect(source).toContain('setStatus("fusion-harness", `refine: loading OpenSpec change');
     expect(source).toContain('startGridWidget(ctx, "refine"');
+    expect(source).toContain('REFINE — ADVERSARIAL DEBATE RESULTS');
+    expect(source).toContain('REFINE: DESIGN SYNTHESIS');
+    expect(source).toContain('REFINE: TASK SYNTHESIS');
+    expect(source).toContain('setStatus("fusion-harness", undefined)');
   });
 
   test("fusion has read-only sources, one full-tool fuser, and no-tools ACKs", () => {

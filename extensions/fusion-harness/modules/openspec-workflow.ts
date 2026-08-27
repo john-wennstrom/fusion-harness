@@ -5,7 +5,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { runChild, runProc } from "./child-runner.ts";
 import type { ModelSlot } from "./model-stack.ts";
 import { openSpecArtifactPrompt, openSpecDebatePrompt, openSpecDesignPrompt, openSpecImplementPrompt, openSpecTasksPrompt } from "./prompt-library.ts";
-import { newRun, runError, runOk, type AgentRun, type HarnessDeps } from "./runtime.ts";
+import { newRun, runError, runOk, toStat, type AgentRun, type HarnessDeps } from "./runtime.ts";
 import { acquireWriterLease, type WriterLease } from "./writer-lease.ts";
 
 export interface OpenSpecArtifact { name: string; path: string; content?: string; contextFiles: string[]; }
@@ -50,18 +50,17 @@ function walk(value: unknown, visit: (object: Record<string, unknown>) => void):
 }
 
 export function resolveArtifact(raw: any, name: string, cwd: string, change: string): OpenSpecArtifact {
-	let artifactPath: string | undefined; const contextFiles = new Set<string>();
+	const artifactPath = path.resolve(cwd, "openspec", "changes", change, `${name}.md`);
+	const contextFiles = new Set<string>();
 	walk(raw, (object) => {
 		for (const key of ["path", "outputPath", "file", "filePath"]) {
 			if (typeof object[key] !== "string" || !/\.md$|\.yaml$|\.yml$|\.json$/.test(object[key] as string)) continue;
-			const candidate = path.resolve(cwd, object[key] as string); contextFiles.add(candidate);
-			if (object.name === name || object.artifact === name || object.id === name || object.type === name || path.basename(candidate).startsWith(`${name}.`)) artifactPath = candidate;
+			contextFiles.add(path.resolve(cwd, object[key] as string));
 		}
 	});
-	const resolvedPath = artifactPath ?? path.resolve(cwd, "openspec", "changes", change, `${name}.md`);
-	contextFiles.add(resolvedPath); let content: string | undefined;
-	try { content = fs.readFileSync(resolvedPath, "utf8"); } catch { /* artifact may not exist yet */ }
-	return { name, path: resolvedPath, content, contextFiles: [...contextFiles] };
+	contextFiles.add(artifactPath); let content: string | undefined;
+	try { content = fs.readFileSync(artifactPath, "utf8"); } catch { /* artifact may not exist yet */ }
+	return { name, path: artifactPath, content, contextFiles: [...contextFiles] };
 }
 
 export function parseTaskPlan(content: string): OpenSpecPhase[] {
@@ -162,15 +161,19 @@ export function registerOpenSpecCommands(pi: ExtensionAPI, h: HarnessDeps): void
 			h.panel({ kind: "banner", command: "refine", ok: true, prompt: change }, `REFINE: STARTING\n\nLoading OpenSpec artifacts and preparing ${h.modelStack().slots.length} read-only debate agents.`);
 			const client = clientFor(ctx); await client.status(change); const design = resolveArtifact(await client.instructions("design", change), "design", ctx.cwd, change); const tasks = resolveArtifact(await client.instructions("tasks", change), "tasks", ctx.cwd, change); const context = await readContext([...new Set([...design.contextFiles, ...tasks.contextFiles])]); const stack = h.modelStack();
 			const debate = await runDebate(h, ctx, change, context); const architect = stack.architect;
+			h.panel({ kind: "multi", command: "refine", title: "REFINE — ADVERSARIAL DEBATE RESULTS", ok: debate.runs.every(runOk), prompt: change, sources: debate.runs.map(toStat), answers: debate.runs.map((run) => ({ role: run.role, model: run.model, text: runOk(run) ? run.text : `FAILED: ${runError(run)}`, slotId: run.slot?.id, slotName: run.slot?.name, color: run.slot?.color, primary: run.slot?.primary })) }, debate.text);
 			ctx.ui.setStatus("fusion-harness", "refine: synthesizing revised design…");
 			const revisedDesign = await runReadOnlyAgent(h, ctx, architect, openSpecDesignPrompt(change, context, debate.text));
 			if (!runOk(revisedDesign)) throw new Error(`design synthesis failed: ${runError(revisedDesign)}`);
+			h.panel({ kind: "solo", command: "refine", ok: true, prompt: change, agent: { role: revisedDesign.role, model: revisedDesign.model, slotId: architect.id, slotName: architect.name, color: architect.color, primary: architect.primary, status: revisedDesign.status, ms: revisedDesign.ms, tokensIn: revisedDesign.tokensIn, tokensOut: revisedDesign.tokensOut, costUsd: revisedDesign.costUsd, toolCalls: revisedDesign.toolCalls, toolNames: revisedDesign.toolNames, toolEvents: revisedDesign.toolEvents, chars: revisedDesign.text.length } }, `REFINE: DESIGN SYNTHESIS\n\n${revisedDesign.text}`);
 			const questionSection = revisedDesign.text.match(/^#{1,2}\s*Open Questions?\s*$([\s\S]*?)(?=^#{1,2}\s|$)/im)?.[1]?.trim() ?? "";
 			if (questionSection && !allowOpen) { h.panel({ kind: "error", command: "refine", ok: false, prompt: change }, `REFINE: NEEDS REVIEW\n\n${questionSection}\n\nTasks generation skipped.`); return; }
 			lease = acquireWriterLease(ctx.cwd, `/refine ${change}`); await atomicWrite(design.path, revisedDesign.text);
+			ctx.ui.setStatus("fusion-harness", "refine: synthesizing implementation tasks…");
 			const revisedTasks = await runReadOnlyAgent(h, ctx, architect, openSpecTasksPrompt(change, context, revisedDesign.text));
 			if (!runOk(revisedTasks)) throw new Error(`task synthesis failed: ${runError(revisedTasks)}`); await atomicWrite(tasks.path, revisedTasks.text); await client.validate(change); h.panel({ kind: "solo", command: "refine", ok: true, prompt: change }, `REFINE: READY\n\nDesign: ${design.path}\nTasks: ${tasks.path}\n\nStrict validation passed.`);
-		} catch (error) { reportWorkflowError(h, ctx, "refine", change, error); } finally { lease?.release(); }
+			h.panel({ kind: "solo", command: "refine", ok: true, prompt: change, agent: { role: revisedTasks.role, model: revisedTasks.model, slotId: architect.id, slotName: architect.name, color: architect.color, primary: architect.primary, status: revisedTasks.status, ms: revisedTasks.ms, tokensIn: revisedTasks.tokensIn, tokensOut: revisedTasks.tokensOut, costUsd: revisedTasks.costUsd, toolCalls: revisedTasks.toolCalls, toolNames: revisedTasks.toolNames, toolEvents: revisedTasks.toolEvents, chars: revisedTasks.text.length } }, `REFINE: TASK SYNTHESIS\n\n${revisedTasks.text}`);
+		} catch (error) { reportWorkflowError(h, ctx, "refine", change, error); } finally { lease?.release(); ctx.ui.setStatus("fusion-harness", undefined); }
 	}});
 
 	pi.registerCommand("implement", { description: "Implement the next or selected OpenSpec phase", handler: async (raw: any, ctx: any) => {
