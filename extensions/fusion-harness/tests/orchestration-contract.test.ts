@@ -46,6 +46,11 @@ describe("orchestration contracts", () => {
     expect(source).toContain('REFINE: DESIGN SYNTHESIS');
     expect(source).toContain('REFINE: TASK SYNTHESIS');
     expect(source).toContain('setStatus("fusion-harness", undefined)');
+    expect(source).toContain('IMPLEMENT: STARTING');
+    expect(source).toContain('IMPLEMENT — COLLABORATION PROPOSALS');
+    expect(source).toContain('IMPLEMENT — DELEGATION PLAN');
+    expect(source).toContain('runOpenSpecCollaboratePhase');
+    expect(source).toContain('startGridWidget(ctx, "implement"');
   });
 
   test("fusion has read-only sources, one full-tool fuser, and no-tools ACKs", () => {

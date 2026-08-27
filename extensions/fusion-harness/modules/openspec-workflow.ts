@@ -3,8 +3,9 @@ import { spawnSync } from "node:child_process";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { runChild, runProc } from "./child-runner.ts";
+import { validateCollaborationPlan, type CollaborationTask, type ValidatedCollaborationPlan } from "./collaboration-graph.ts";
 import type { ModelSlot } from "./model-stack.ts";
-import { openSpecArtifactPrompt, openSpecDebatePrompt, openSpecDesignPrompt, openSpecImplementPrompt, openSpecTasksPrompt } from "./prompt-library.ts";
+import { collabExecutePrompt, collabProposePrompt, contractSystemPrompt, openSpecArtifactPrompt, openSpecCollaboratePrompt, openSpecDebatePrompt, openSpecDesignPrompt, openSpecTasksPrompt, parseStrictJsonObject } from "./prompt-library.ts";
 import { newRun, runError, runOk, toStat, type AgentRun, type HarnessDeps } from "./runtime.ts";
 import { acquireWriterLease, type WriterLease } from "./writer-lease.ts";
 
@@ -121,6 +122,49 @@ export async function runFusionArtifact(h: HarnessDeps, ctx: any, slot: ModelSlo
 	return { run, content: runOk(run) ? run.text : "" };
 }
 
+export async function runOpenSpecCollaboratePhase(h: HarnessDeps, ctx: any, change: string, phase: OpenSpecPhase, context: string): Promise<void> {
+	const stack = h.modelStack();
+	const taskIds = phase.tasks.map((task, index) => `${phase.number}.${String.fromCharCode(97 + index)}`);
+	const taskById = new Map(phase.tasks.map((task, index) => [taskIds[index], task]));
+	const taskText = phase.tasks.map((task, index) => `- ${taskIds[index]} (OpenSpec task ${task.id}): ${task.description}`).join("\n");
+	const proposalRuns = stack.slots.map((slot) => newRun(slot.architect ? "ARCHITECT" : "BUILDER", slot.model, slot));
+	const proposalWidget = h.startGridWidget(ctx, "implement", proposalRuns, undefined, Date.now());
+	try {
+		await Promise.all(proposalRuns.map(async (run) => {
+			const slot = run.slot!;
+			await runChild({ run, prompt: collabProposePrompt(slot, stack, `Implement OpenSpec change ${change}, phase ${phase.number} — ${phase.title}. Propose concrete work for only these tasks:\n${taskText}\n\n${context}`), systemPrompt: slot.systemPrompt, appendSystemPrompts: slot.appendSystemPrompts, access: "read", childRuntime: h.resolveChildRuntime(slot, "read"), thinking: slot.thinking, ...h.slotInitialSpawn(slot, ctx, await h.mkArtifacts()), cwd: ctx.cwd, timeoutMs: h.childTimeoutMs() });
+		}));
+	} finally { proposalWidget(); h.absorbRuns(proposalRuns); }
+	h.panel({ kind: "multi", command: "implement", title: "IMPLEMENT — COLLABORATION PROPOSALS", ok: proposalRuns.every(runOk), prompt: change, sources: proposalRuns.map(toStat), answers: proposalRuns.map((run) => ({ role: run.role, model: run.model, text: runOk(run) ? run.text : `FAILED: ${runError(run)}`, slotId: run.slot?.id, slotName: run.slot?.name, color: run.slot?.color, primary: run.slot?.primary })) }, proposalRuns.map((run) => `## ${run.slot?.name ?? run.model}\n${runOk(run) ? run.text : runError(run)}`).join("\n\n"));
+	if (proposalRuns.filter(runOk).length < 2) throw new Error("phase collaboration needs at least two successful agent proposals");
+
+	const planRun = newRun("ARCHITECT", stack.architect.model, stack.architect);
+	const planPrompt = openSpecCollaboratePrompt(change, phase.number, phase.title, taskText, stack.slots.map((slot) => slot.id).join(", "), taskIds[0], stack.slots[0].id, `${context}\n\nPROPOSALS:\n${proposalRuns.map((run) => `## ${run.slot?.name}\n${run.text}`).join("\n\n")}`);
+	await runChild({ run: planRun, prompt: planPrompt, systemPrompt: contractSystemPrompt(stack.architect.systemPrompt, "SYSTEM_PROMPT_COLLAB_COORDINATOR.md"), appendSystemPrompts: stack.architect.appendSystemPrompts, access: "read", childRuntime: h.resolveChildRuntime(stack.architect, "read"), thinking: stack.architect.thinking, ...h.slotInitialSpawn(stack.architect, ctx, await h.mkArtifacts()), cwd: ctx.cwd, timeoutMs: h.childTimeoutMs() });
+	if (!runOk(planRun)) throw new Error(`phase delegation failed: ${runError(planRun)}`);
+	const rawPlan = parseStrictJsonObject(planRun.text, "phase delegation plan");
+	const plan = validateCollaborationPlan(rawPlan, stack.slots.map((slot) => slot.id));
+	if (plan.tasks.some((task) => !taskById.has(task.id))) throw new Error("phase delegation referenced a task outside the selected OpenSpec phase");
+	if (plan.tasks.length !== taskIds.length || taskIds.some((id) => !plan.tasks.some((task) => task.id === id))) throw new Error("phase delegation must assign every selected OpenSpec task exactly once");
+	h.panel({ kind: "solo", command: "implement", ok: true, prompt: change, agent: toStat(planRun) }, `IMPLEMENT — DELEGATION PLAN\n\n${JSON.stringify(rawPlan, null, 2)}`);
+
+	const executionRuns = stack.slots.map((slot) => newRun(slot.architect ? "ARCHITECT" : "BUILDER", slot.model, slot));
+	const executionWidget = h.startGridWidget(ctx, "implement", executionRuns, undefined, Date.now());
+	try {
+		for (const wave of plan.waves) {
+			for (const task of wave) {
+				const slot = stack.slots.find((candidate) => candidate.id === task.assignee)!;
+				const run = executionRuns.find((candidate) => candidate.slot?.id === slot.id)!;
+				const original = taskById.get(task.id)!;
+				const handoff = `OpenSpec task ${original.id}. Requirements: ${original.requirements.join(", ") || "see specs"}. Scenarios: ${original.scenarios.join(", ") || "see specs"}. Verify commands: ${original.verifyCommands.join(", ") || "none"}.`;
+				await runChild({ run, prompt: collabExecutePrompt(slot, `Implement OpenSpec change ${change}, phase ${phase.number} — ${phase.title}.`, task, handoff), systemPrompt: slot.systemPrompt, appendSystemPrompts: slot.appendSystemPrompts, access: task.mode === "read" ? "read" : "write", childRuntime: h.resolveChildRuntime(slot, task.mode === "read" ? "read" : "write"), thinking: slot.thinking, ...h.slotNextSpawn(slot, run, h.slotInitialSpawn(slot, ctx, await h.mkArtifacts()), ctx), cwd: ctx.cwd, timeoutMs: h.buildTimeoutMs() });
+				if (!runOk(run)) throw new Error(`task ${original.id} (${slot.id}) failed: ${runError(run)}`);
+				h.panel({ kind: "solo", command: "implement", ok: true, prompt: change, agent: toStat(run) }, `IMPLEMENT — TASK ${original.id}\n\n${run.text}`);
+			}
+		}
+	} finally { executionWidget(); h.absorbRuns(executionRuns); }
+}
+
 function artifactPrompt(change: string, artifact: string, context: string, instruction: string): string {
 	return openSpecArtifactPrompt(change, artifact, instruction, context);
 }
@@ -180,13 +224,18 @@ export function registerOpenSpecCommands(pi: ExtensionAPI, h: HarnessDeps): void
 		const parsed = parseChange(raw ?? "", "/implement"); if (!parsed) return ctx.ui.notify("Usage: /implement <change> [next|phase]", "warning"); let lease: WriterLease | undefined;
 		if (!requireOpenSpec(h, ctx, "implement", parsed.change)) return;
 		try {
+			ctx.ui.setStatus("fusion-harness", `implement: loading OpenSpec change ${parsed.change}…`);
+			h.panel({ kind: "banner", command: "implement", ok: true, prompt: parsed.change }, `IMPLEMENT: STARTING\n\nLoading the task plan for ${parsed.change}.`);
 			const client = clientFor(ctx); await client.validate(parsed.change); const artifact = resolveArtifact(await client.instructions("tasks", parsed.change), "tasks", ctx.cwd, parsed.change); if (!artifact.content) throw new Error(`tasks artifact not found at ${artifact.path}`); const phases = parseTaskPlan(artifact.content); const phase = parsed.phase ? phases.find((item) => item.number === parsed.phase) : phases.find((item) => item.tasks.some((task) => !task.checked)); if (!phase) throw new Error("no incomplete phase remains"); const incomplete = phase.tasks.filter((task) => !task.checked);
 			const taskText = incomplete.map((task) => `- ${task.id}: ${task.description}\n  Requirements: ${task.requirements.join(", ") || "see specs"}\n  Scenarios: ${task.scenarios.join(", ") || "see specs"}\n  Verify commands: ${task.verifyCommands.join(", ") || "none"}`).join("\n");
-			const prompt = openSpecImplementPrompt(parsed.change, phase.number, phase.title, taskText);
-			lease = acquireWriterLease(ctx.cwd, `/implement ${parsed.change} phase ${phase.number}`); const builder = h.modelStack().primaryBuilder; const run = newRun("BUILDER", builder.model, builder); await runChild({ run, prompt, systemPrompt: builder.systemPrompt, appendSystemPrompts: builder.appendSystemPrompts, access: "write", childRuntime: h.resolveChildRuntime(builder, "write"), thinking: builder.thinking, ...h.slotInitialSpawn(builder, ctx, await h.mkArtifacts()), cwd: ctx.cwd, timeoutMs: h.buildTimeoutMs() }); if (!runOk(run)) throw new Error(`implementation failed: ${runError(run)}`);
-			for (const task of incomplete) for (const command of task.verifyCommands) { const commandParts = command.split(/\s+/); const result = await runProc(commandParts[0], commandParts.slice(1), ctx.cwd, 120_000); if (result.code !== 0) throw new Error(`task ${task.id} verification failed:\n${result.output}`); }
+			const context = await readContext(artifact.contextFiles);
+			h.panel({ kind: "solo", command: "implement", ok: true, prompt: parsed.change }, `IMPLEMENT: PHASE ${phase.number} — ${phase.title}\n\n${taskText}`);
+			ctx.ui.setStatus("fusion-harness", `implement: collaborating on phase ${phase.number}…`);
+			lease = acquireWriterLease(ctx.cwd, `/implement ${parsed.change} phase ${phase.number}`);
+			await runOpenSpecCollaboratePhase(h, ctx, parsed.change, phase, context);
+			for (const task of incomplete) for (const command of task.verifyCommands) { ctx.ui.setStatus("fusion-harness", `implement: verifying ${task.id} with ${command}…`); const commandParts = command.split(/\s+/); const result = await runProc(commandParts[0], commandParts.slice(1), ctx.cwd, 120_000); if (result.code !== 0) throw new Error(`task ${task.id} verification failed:\n${result.output}`); }
 			let updated = artifact.content; for (const task of incomplete) updated = updated.replace(new RegExp(`(-\\s*)\\[ \\]\\s+${task.id.replace(".", "\\.")}(\\s+)`), "$1[x]$2"); await atomicWrite(artifact.path, updated); await client.validate(parsed.change); h.panel({ kind: "solo", command: "implement", ok: true, prompt: parsed.change }, `IMPLEMENT: PASS\n\nPhase ${phase.number} — ${phase.title}\nTasks checked: ${incomplete.map((task) => task.id).join(", ")}`);
-		} catch (error) { reportWorkflowError(h, ctx, "implement", parsed?.change ?? "", error); } finally { lease?.release(); }
+		} catch (error) { reportWorkflowError(h, ctx, "implement", parsed?.change ?? "", error); } finally { lease?.release(); ctx.ui.setStatus("fusion-harness", undefined); }
 	}});
 
 	pi.registerCommand("ship", { description: "Verify and archive a completed OpenSpec change", handler: async (raw: any, ctx: any) => {

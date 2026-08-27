@@ -312,6 +312,10 @@ export function openSpecTasksPrompt(change: string, context: string, design: str
 	return fill("USER_PROMPT_OPENSPEC_TASKS.md", { CHANGE: change, CONTEXT: context, DESIGN: design });
 }
 
+export function openSpecCollaboratePrompt(change: string, phase: number, phaseTitle: string, tasks: string, assignees: string, taskIdExample: string, assigneeExample: string, context: string): string {
+	return fill("USER_PROMPT_OPENSPEC_COLLABORATE.md", { CHANGE: change, PHASE: String(phase), PHASE_TITLE: phaseTitle, TASKS: tasks, ASSIGNEES: assignees, TASK_ID_EXAMPLE: taskIdExample, ASSIGNEE_EXAMPLE: assigneeExample, CONTEXT: context });
+}
+
 // ═══ Strict-output parsing ═══════════════════════════════════════════════════
 
 export function parseStrictJsonObject(text: string, label: string): Record<string, unknown> {

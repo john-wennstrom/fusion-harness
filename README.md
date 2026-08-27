@@ -189,7 +189,7 @@ No config auto-discovery occurs; `--fh-config` is explicit.
 | `/fh-auto-validate <prompt>` | Existing gate-first ARCHITECT + Main build loop. |
 | `/os-status <change>` | Show OpenSpec status plus checked/unchecked task counts by phase. |
 | `/refine <change> [--allow-open]` | Run a read-only multi-model design review, synthesize `design.md` and `tasks.md`, write them through the host, then run `openspec validate --strict`. Blocks task generation when the revised design contains open questions unless `--allow-open` is supplied. |
-| `/implement <change> [next\|phase]` | Select the first phase containing unchecked tasks, or an explicit phase, ask the primary builder to implement it, run each task's `Verify command`, check tasks off only after those commands pass, and strict-validate again. |
+| `/implement <change> [next\|phase]` | Select the first phase containing unchecked tasks, or an explicit phase, run phase-scoped collaboration across all configured slots, execute task `Verify command` checks, check tasks off only after those commands pass, and strict-validate again. |
 | `/ship <change>` | Refuse to archive while tasks are unchecked; otherwise run strict validation and OpenSpec verification before `openspec archive <change> -y`. |
 | `/fh-system-prompt` | Responsive grid of every slot's effective system prompt. |
 | `/fh-reset` | Full reset: fresh host session and fresh slot sessions — equivalent to `/new` plus a slot wipe. |
@@ -223,7 +223,7 @@ Review the generated proposal, specs, design, and tasks before refining them. Th
 /os-status <CHANGE>
 /refine <CHANGE>
 
-# Review the revised design.md and tasks.md.
+# Implement the revised design.md and tasks.md.
 /implement <CHANGE> next
 /implement <CHANGE> next
 
@@ -255,7 +255,7 @@ The refinement agents cannot write the checkout. The host owns the exact artifac
 
 `/implement <change>` selects the first phase containing an unchecked task. `/implement <change> next` is equivalent. `/implement <change> <number>` selects a specific phase for retries or debugging; phase numbers remain an outer dependency barrier.
 
-The primary builder receives only the selected phase's unchecked tasks, including their Requirement, Scenario, and Verify command metadata when present. The builder is instructed not to edit task checkboxes. After the builder exits, the host runs every `Verify command` found for the phase. A task is changed from `- [ ]` to `- [x]` only when all listed commands pass. A failed command leaves the task unchecked and prevents the success report. Strict OpenSpec validation runs again after successful checkoffs.
+`/implement` uses a phase-scoped collaboration flow: every configured slot proposes work read-only, the architect produces a delegation plan constrained to the selected phase, and assigned tasks execute under the single writer lease. Agents are instructed not to edit task checkboxes. After execution, the host runs every `Verify command` found for the phase. A task is changed from `- [ ]` to `- [x]` only when all listed commands pass. A failed command leaves the task unchecked and prevents the success report. Strict OpenSpec validation runs again after successful checkoffs.
 
 Tasks without a `Verify command` are currently implemented without an executable task-level check; use scenario references and project tests in the task plan whenever possible.
 
@@ -271,7 +271,7 @@ openspec archive <change> -y
 
 If any gate fails, nothing is archived. Inspect the reported artifact or verification output, correct the change, and rerun the appropriate workflow command.
 
-The current first version uses the primary builder for `/implement`. It does not yet route a selected phase through `/fh-collaborate`'s internal delegation DAG or provide model-based verification for scenario-only tasks; those are separate future extensions.
+`/implement` does not provide model-based verification for scenario-only tasks; executable `Verify command` entries remain the strongest task-level gate.
 
 ## Single-writer invariant
 
