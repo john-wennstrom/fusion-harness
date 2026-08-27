@@ -90,4 +90,209 @@ describe("model stack", () => {
     expect(stack.slots).toHaveLength(2);
     expect(stack.primaryBuilder.model).toBe("b/model");
   });
+
+  test("object-form config parses global child runtime and resolves relative extension paths", () => {
+    const body = `
+child:
+  extensions:
+    - npm:semantic-tools
+    - git:github.com/example/project-memory
+    - ./local-extension.ts
+  tools:
+    read:
+      - semantic_find
+      - memory_recall
+    write:
+      - memory_store
+slots:
+  - name: architect
+    model: anthropic/claude-fable-5
+    architect: true
+  - name: main
+    model: openai/gpt-5.6-sol
+    primary: true
+`;
+    const { dir, file } = fixture(body);
+    mkdirSync(join(dir, "sub"), { recursive: true });
+    const stack = loadModelStack(file);
+    expect(stack.child?.extensions).toEqual([
+      "npm:semantic-tools",
+      "git:github.com/example/project-memory",
+      join(dir, "local-extension.ts"),
+    ]);
+    expect(stack.child?.tools?.read).toEqual(["semantic_find", "memory_recall"]);
+    expect(stack.child?.tools?.write).toEqual(["memory_store"]);
+  });
+
+  test("per-slot child override fields parse independently", () => {
+    const body = `
+child:
+  extensions:
+    - npm:semantic-tools
+  tools:
+    read:
+      - semantic_find
+    write:
+      - memory_store
+slots:
+  - name: architect
+    model: anthropic/claude-fable-5
+    architect: true
+  - name: main
+    model: openai/gpt-5.6-sol
+    primary: true
+    child:
+      extensions: []
+      tools:
+        write: []
+`;
+    const stack = loadModelStack(fixture(body).file);
+    const main = stack.primaryBuilder;
+    expect(main.child?.extensions).toEqual([]);
+    expect(main.child?.tools?.write).toEqual([]);
+    expect(main.child?.tools?.read).toBeUndefined();
+  });
+
+  test("per-slot child tools support inherit/include/exclude rule objects", () => {
+    const body = `
+child:
+  tools:
+    read:
+      - semantic_find
+      - memory_recall
+slots:
+  - name: architect
+    model: anthropic/claude-fable-5
+    architect: true
+    child:
+      tools:
+        read:
+          include:
+            - arch_research
+          exclude:
+            - semantic_find
+        write:
+          inherit: false
+          include:
+            - arch_write_only
+  - name: main
+    model: openai/gpt-5.6-sol
+    primary: true
+`;
+    const stack = loadModelStack(fixture(body).file);
+    const architect = stack.architect;
+    expect(architect.child?.tools?.read).toEqual({ include: ["arch_research"], exclude: ["semantic_find"] });
+    expect(architect.child?.tools?.write).toEqual({ inherit: false, include: ["arch_write_only"] });
+  });
+
+  test.each([
+    ["child extensions not array", `
+child:
+  extensions: npm:semantic-tools
+slots:
+  - name: architect
+    model: anthropic/claude-fable-5
+    architect: true
+  - name: main
+    model: openai/gpt-5.6-sol
+    primary: true
+`],
+    ["child extension entry not string", `
+child:
+  extensions:
+    - 123
+slots:
+  - name: architect
+    model: anthropic/claude-fable-5
+    architect: true
+  - name: main
+    model: openai/gpt-5.6-sol
+    primary: true
+`],
+    ["tool list has duplicate", `
+child:
+  tools:
+    read:
+      - semantic_find
+      - semantic_find
+slots:
+  - name: architect
+    model: anthropic/claude-fable-5
+    architect: true
+  - name: main
+    model: openai/gpt-5.6-sol
+    primary: true
+`],
+    ["tool appears in read and write", `
+child:
+  tools:
+    read:
+      - memory_store
+    write:
+      - memory_store
+slots:
+  - name: architect
+    model: anthropic/claude-fable-5
+    architect: true
+  - name: main
+    model: openai/gpt-5.6-sol
+    primary: true
+`],
+    ["unknown child key", `
+child:
+  nope: true
+slots:
+  - name: architect
+    model: anthropic/claude-fable-5
+    architect: true
+  - name: main
+    model: openai/gpt-5.6-sol
+    primary: true
+`],
+    ["slot child unknown tool key", `
+slots:
+  - name: architect
+    model: anthropic/claude-fable-5
+    architect: true
+    child:
+      tools:
+        mutate:
+          - db_write
+  - name: main
+    model: openai/gpt-5.6-sol
+    primary: true
+`],
+    ["tool rule unknown key", `
+slots:
+  - name: architect
+    model: anthropic/claude-fable-5
+    architect: true
+    child:
+      tools:
+        read:
+          plus:
+            - semantic_find
+  - name: main
+    model: openai/gpt-5.6-sol
+    primary: true
+`],
+    ["tool rule include and exclude same name", `
+slots:
+  - name: architect
+    model: anthropic/claude-fable-5
+    architect: true
+    child:
+      tools:
+        read:
+          include:
+            - semantic_find
+          exclude:
+            - semantic_find
+  - name: main
+    model: openai/gpt-5.6-sol
+    primary: true
+`],
+  ])("rejects object-form child config error: %s", (_label, body) => {
+    expect(() => loadModelStack(fixture(body).file)).toThrow("model-stack config invalid");
+  });
 });

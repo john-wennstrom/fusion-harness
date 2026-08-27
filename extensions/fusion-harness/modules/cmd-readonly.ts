@@ -14,7 +14,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { runChild } from "./child-runner.ts";
 import { orderedSlots } from "./model-stack.ts";
 import { debateClosingPrompt, debateOpeningPrompt, debateRebuttalPrompt, opinionPrompt } from "./prompt-library.ts";
-import { clampCount, CUSTOM_TYPE, READONLY_TOOLS, runError, runOk, toStat, type AgentRun, type HarnessDeps } from "./runtime.ts";
+import { clampCount, CUSTOM_TYPE, runError, runOk, toStat, type AgentRun, type HarnessDeps } from "./runtime.ts";
 
 const ROUNDS_DEFAULT = 3;
 
@@ -57,7 +57,7 @@ export function registerReadonlyCommands(pi: ExtensionAPI, h: HarnessDeps): void
 					const slot = run.slot!;
 					const agentDir = path.join(artifactsDir, "agents", slot.id);
 					await fs.promises.mkdir(agentDir, { recursive: true });
-					await runChild({ run, prompt: opinionPrompt(slot, stack, prompt), systemPrompt: slot.systemPrompt, appendSystemPrompts: slot.appendSystemPrompts, tools: READONLY_TOOLS, thinking: slot.thinking, ...h.slotInitialSpawn(slot, ctx, agentDir), cwd: ctx.cwd, timeoutMs: h.childTimeoutMs(), signal: stopper.signal });
+					await runChild({ run, prompt: opinionPrompt(slot, stack, prompt), systemPrompt: slot.systemPrompt, appendSystemPrompts: slot.appendSystemPrompts, access: "read", childRuntime: h.resolveChildRuntime(slot, "read"), thinking: slot.thinking, ...h.slotInitialSpawn(slot, ctx, agentDir), cwd: ctx.cwd, timeoutMs: h.childTimeoutMs(), signal: stopper.signal });
 					await h.save(agentDir, "answer.md", runOk(run) ? run.text : `FAILED: ${runError(run)}`);
 				}));
 				if (stopper.stopped()) {
@@ -130,7 +130,7 @@ export function registerReadonlyCommands(pi: ExtensionAPI, h: HarnessDeps): void
 						const roundDir = path.join(artifactsDir, "debate", `round-${round}`);
 						await fs.promises.mkdir(roundDir, { recursive: true });
 						const identity = round === 1 ? initialSpawns.get(slot.id)! : h.slotNextSpawn(slot, run, initialSpawns.get(slot.id)!, ctx);
-						await runChild({ run, prompt: prompts.get(slot.id)!, systemPrompt: slot.systemPrompt, appendSystemPrompts: slot.appendSystemPrompts, tools: READONLY_TOOLS, thinking: slot.thinking, ...identity, cwd: ctx.cwd, timeoutMs: h.childTimeoutMs(), signal: stopper.signal });
+						await runChild({ run, prompt: prompts.get(slot.id)!, systemPrompt: slot.systemPrompt, appendSystemPrompts: slot.appendSystemPrompts, access: "read", childRuntime: h.resolveChildRuntime(slot, "read"), thinking: slot.thinking, ...identity, cwd: ctx.cwd, timeoutMs: h.childTimeoutMs(), signal: stopper.signal });
 						await h.save(roundDir, `${slot.id}.md`, runOk(run) ? run.text : `FAILED: ${runError(run)}`);
 					}));
 					if (stopper.stopped()) {

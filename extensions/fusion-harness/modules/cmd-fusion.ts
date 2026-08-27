@@ -22,9 +22,7 @@ import {
 } from "./prompt-library.ts";
 import {
 	CUSTOM_TYPE,
-	FULL_TOOLS,
 	newRun,
-	READONLY_TOOLS,
 	runError,
 	runOk,
 	splitUtf8,
@@ -76,7 +74,7 @@ export function registerFusionCommand(pi: ExtensionAPI, h: HarnessDeps): void {
 					const slot = run.slot!;
 					const agentDir = path.join(artifactsDir, "agents", slot.id);
 					await fs.promises.mkdir(agentDir, { recursive: true });
-					await runChild({ run, prompt: workerPrompt(slot, stack, prompt), systemPrompt: slot.systemPrompt, appendSystemPrompts: slot.appendSystemPrompts, tools: READONLY_TOOLS, thinking: slot.thinking, ...initialSpawns.get(slot.id)!, cwd: ctx.cwd, timeoutMs: h.childTimeoutMs(), signal: stopper.signal });
+					await runChild({ run, prompt: workerPrompt(slot, stack, prompt), systemPrompt: slot.systemPrompt, appendSystemPrompts: slot.appendSystemPrompts, access: "read", childRuntime: h.resolveChildRuntime(slot, "read"), thinking: slot.thinking, ...initialSpawns.get(slot.id)!, cwd: ctx.cwd, timeoutMs: h.childTimeoutMs(), signal: stopper.signal });
 					await h.save(agentDir, "answer.md", runOk(run) ? run.text : `FAILED: ${runError(run)}`);
 				}));
 				if (stopper.stopped()) {
@@ -101,7 +99,7 @@ export function registerFusionCommand(pi: ExtensionAPI, h: HarnessDeps): void {
 					return;
 				}
 				ctx.ui.setStatus(CUSTOM_TYPE, "fusion: temporary sole-writer agent merging and implementing…");
-				await runChild({ run: fuser, prompt: fuserPrompt(fusionInstruction, prompt, runs, fuser.model, stack.architect.thinking, artifactsDir), systemPrompt: contractSystemPrompt(stack.architect.systemPrompt, "SYSTEM_PROMPT_FUSION.md"), appendSystemPrompts: stack.architect.appendSystemPrompts, tools: FULL_TOOLS, thinking: stack.architect.thinking, sessionDir: path.join(artifactsDir, "fusion"), cwd: ctx.cwd, timeoutMs: h.childTimeoutMs(), signal: stopper.signal });
+				await runChild({ run: fuser, prompt: fuserPrompt(fusionInstruction, prompt, runs, fuser.model, stack.architect.thinking, artifactsDir), systemPrompt: contractSystemPrompt(stack.architect.systemPrompt, "SYSTEM_PROMPT_FUSION.md"), appendSystemPrompts: stack.architect.appendSystemPrompts, access: "write", childRuntime: h.resolveChildRuntime(stack.architect, "write"), thinking: stack.architect.thinking, sessionDir: path.join(artifactsDir, "fusion"), cwd: ctx.cwd, timeoutMs: h.childTimeoutMs(), signal: stopper.signal });
 				if (stopper.stopped()) {
 					h.stoppedPanel("fh-fusion", [...runs, fuser], artifactsDir, startedAt, "The temporary FUSION writer was stopped; source work remains on disk.");
 					return;
@@ -139,13 +137,13 @@ export function registerFusionCommand(pi: ExtensionAPI, h: HarnessDeps): void {
 					const ackRun = h.newSlotRun(slot);
 					const sourceInitial = initialSpawns.get(slot.id)!;
 					const identity = slot.primary ? h.slotInitialSpawn(slot, ctx, path.join(artifactsDir, "acks", slot.id)) : h.slotNextSpawn(slot, sourceRun, sourceInitial, ctx);
-					await runChild({ run: ackRun, prompt: ackSpec.prompt, systemPrompt: slot.systemPrompt, appendSystemPrompts: slot.appendSystemPrompts, tools: "none", thinking: slot.thinking, ...identity, cwd: ctx.cwd, timeoutMs: h.childTimeoutMs(), signal: stopper.signal });
+					await runChild({ run: ackRun, prompt: ackSpec.prompt, systemPrompt: slot.systemPrompt, appendSystemPrompts: slot.appendSystemPrompts, access: "none", childRuntime: h.resolveChildRuntime(slot, "none"), thinking: slot.thinking, ...identity, cwd: ctx.cwd, timeoutMs: h.childTimeoutMs(), signal: stopper.signal });
 					let finalRun = ackRun;
 					const expected = `ACK FUSION ${runId}`;
 					if (!runOk(finalRun) || finalRun.text.trim() !== expected) {
 						const retry = h.newSlotRun(slot);
 						const retryIdentity: SpawnIdentity = finalRun.sessionRef ? { sessionDir: identity.sessionDir, resume: finalRun.sessionRef } : identity;
-						await runChild({ run: retry, prompt: ackSpec.prompt, systemPrompt: slot.systemPrompt, appendSystemPrompts: slot.appendSystemPrompts, tools: "none", thinking: slot.thinking, ...retryIdentity, cwd: ctx.cwd, timeoutMs: h.childTimeoutMs(), signal: stopper.signal });
+						await runChild({ run: retry, prompt: ackSpec.prompt, systemPrompt: slot.systemPrompt, appendSystemPrompts: slot.appendSystemPrompts, access: "none", childRuntime: h.resolveChildRuntime(slot, "none"), thinking: slot.thinking, ...retryIdentity, cwd: ctx.cwd, timeoutMs: h.childTimeoutMs(), signal: stopper.signal });
 						finalRun = retry;
 					}
 					// Both attempts spent real tokens; the FINAL one carries the slot's post-sync

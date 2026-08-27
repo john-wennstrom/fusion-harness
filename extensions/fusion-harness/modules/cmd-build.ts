@@ -35,15 +35,12 @@ import {
 	clampCount,
 	CUSTOM_TYPE,
 	DETAIL_SNIPPET_MAX,
-	FULL_TOOLS,
 	GATE_TIMEOUT_MS,
 	newRun,
-	READONLY_TOOLS,
 	runError,
 	runOk,
 	toStat,
 	truncateChars,
-	VALIDATOR_TOOLS,
 	type AgentStat,
 	type FhDetails,
 	type HarnessDeps,
@@ -103,7 +100,7 @@ export function registerCollaborateCommand(pi: ExtensionAPI, h: HarnessDeps): vo
 				await fs.promises.mkdir(proposalsDir, { recursive: true });
 				await Promise.all(runs.map(async (run) => {
 					const slot = run.slot!;
-					await runChild({ run, prompt: collabProposePrompt(slot, stack, prompt), systemPrompt: slot.systemPrompt, appendSystemPrompts: slot.appendSystemPrompts, tools: READONLY_TOOLS, thinking: slot.thinking, ...initialSpawns.get(slot.id)!, cwd: ctx.cwd, timeoutMs: h.childTimeoutMs(), signal: stopper.signal });
+					await runChild({ run, prompt: collabProposePrompt(slot, stack, prompt), systemPrompt: slot.systemPrompt, appendSystemPrompts: slot.appendSystemPrompts, access: "read", childRuntime: h.resolveChildRuntime(slot, "read"), thinking: slot.thinking, ...initialSpawns.get(slot.id)!, cwd: ctx.cwd, timeoutMs: h.childTimeoutMs(), signal: stopper.signal });
 					await h.save(proposalsDir, `${slot.id}.md`, runOk(run) ? run.text : `FAILED: ${runError(run)}`);
 				}));
 				if (stopper.stopped()) {
@@ -124,7 +121,7 @@ export function registerCollaborateCommand(pi: ExtensionAPI, h: HarnessDeps): vo
 				for (let attempt = 1; attempt <= 3; attempt++) {
 					ctx.ui.setStatus(CUSTOM_TYPE, `collaborate: architect merging plans into a delegation graph${attempt > 1 ? ` (repair ${attempt - 1})` : ""}…`);
 					const delegatePrompt = collabDelegatePrompt(stack, prompt, collabDir, planPath) + (planError ? `\n\nPREVIOUS PLAN VALIDATION FAILED:\n${planError}\nRewrite the complete corrected plan.` : "");
-					await runChild({ run: architectRun, prompt: delegatePrompt, systemPrompt: contractSystemPrompt(stack.architect.systemPrompt, "SYSTEM_PROMPT_COLLAB_COORDINATOR.md"), appendSystemPrompts: stack.architect.appendSystemPrompts, tools: READONLY_TOOLS, thinking: stack.architect.thinking, ...h.slotNextSpawn(stack.architect, architectRun, initialSpawns.get(stack.architect.id)!, ctx), cwd: ctx.cwd, timeoutMs: h.childTimeoutMs(), signal: stopper.signal });
+					await runChild({ run: architectRun, prompt: delegatePrompt, systemPrompt: contractSystemPrompt(stack.architect.systemPrompt, "SYSTEM_PROMPT_COLLAB_COORDINATOR.md"), appendSystemPrompts: stack.architect.appendSystemPrompts, access: "read", childRuntime: h.resolveChildRuntime(stack.architect, "read"), thinking: stack.architect.thinking, ...h.slotNextSpawn(stack.architect, architectRun, initialSpawns.get(stack.architect.id)!, ctx), cwd: ctx.cwd, timeoutMs: h.childTimeoutMs(), signal: stopper.signal });
 					if (stopper.stopped()) {
 						h.stoppedPanel("fh-collaborate", runs, artifactsDir, startedAt, "Stopped while the architect was producing the delegation graph.");
 						return;
@@ -215,7 +212,8 @@ export function registerCollaborateCommand(pi: ExtensionAPI, h: HarnessDeps): vo
 						maxConcurrentWriteEnabledChildren = Math.max(maxConcurrentWriteEnabledChildren, activeWriters);
 					}
 					try {
-						await runChild({ run, prompt: collabExecutePrompt(slot, prompt, task, taskHandoff(task)), systemPrompt: slot.systemPrompt, appendSystemPrompts: slot.appendSystemPrompts, tools: write ? FULL_TOOLS : READONLY_TOOLS, thinking: slot.thinking, ...h.slotNextSpawn(slot, run, initialSpawns.get(slot.id)!, ctx), cwd: ctx.cwd, timeoutMs: h.childTimeoutMs(), signal: stopper.signal });
+						const access = write ? "write" : "read";
+						await runChild({ run, prompt: collabExecutePrompt(slot, prompt, task, taskHandoff(task)), systemPrompt: slot.systemPrompt, appendSystemPrompts: slot.appendSystemPrompts, access, childRuntime: h.resolveChildRuntime(slot, access), thinking: slot.thinking, ...h.slotNextSpawn(slot, run, initialSpawns.get(slot.id)!, ctx), cwd: ctx.cwd, timeoutMs: h.childTimeoutMs(), signal: stopper.signal });
 					} finally {
 						if (write) activeWriters--;
 					}
@@ -273,7 +271,7 @@ export function registerCollaborateCommand(pi: ExtensionAPI, h: HarnessDeps): vo
 				activeWriters++;
 				maxConcurrentWriteEnabledChildren = Math.max(maxConcurrentWriteEnabledChildren, activeWriters);
 				try {
-					await runChild({ run: architectRun, prompt: collabCoordinatePrompt(prompt, reportsDir, planPath), systemPrompt: contractSystemPrompt(stack.architect.systemPrompt, "SYSTEM_PROMPT_COLLAB_COORDINATOR.md"), appendSystemPrompts: stack.architect.appendSystemPrompts, tools: FULL_TOOLS, thinking: stack.architect.thinking, ...h.slotNextSpawn(stack.architect, architectRun, initialSpawns.get(stack.architect.id)!, ctx), cwd: ctx.cwd, timeoutMs: h.childTimeoutMs(), signal: stopper.signal });
+					await runChild({ run: architectRun, prompt: collabCoordinatePrompt(prompt, reportsDir, planPath), systemPrompt: contractSystemPrompt(stack.architect.systemPrompt, "SYSTEM_PROMPT_COLLAB_COORDINATOR.md"), appendSystemPrompts: stack.architect.appendSystemPrompts, access: "write", childRuntime: h.resolveChildRuntime(stack.architect, "write"), thinking: stack.architect.thinking, ...h.slotNextSpawn(stack.architect, architectRun, initialSpawns.get(stack.architect.id)!, ctx), cwd: ctx.cwd, timeoutMs: h.childTimeoutMs(), signal: stopper.signal });
 				} finally {
 					activeWriters--;
 				}
@@ -399,7 +397,8 @@ export function registerAutoValidateCommand(pi: ExtensionAPI, h: HarnessDeps): v
 					run: validator,
 					prompt: validatorPrompt(prompt, ctx.cwd, scriptPath),
 					systemPrompt: validatorSystem(scriptPath),
-					tools: VALIDATOR_TOOLS,
+					access: "validator",
+					childRuntime: h.resolveChildRuntime(h.modelStack().architect, "validator"),
 					thinking: h.roleThinking("architect"),
 					sessionDir: h.roleSession("architect", ctx.cwd).dir,
 					sessionId: h.roleSession("architect", ctx.cwd).id,
@@ -508,7 +507,8 @@ export function registerAutoValidateCommand(pi: ExtensionAPI, h: HarnessDeps): v
 						prompt: round === 1 ? builderPrompt(prompt, script) : correctionPrompt(round, maxV, lastGate!.code, lastGate!.output, triageBrief, gateUpdate),
 						systemPrompt: h.roleSystemPrompt("builder"),
 						appendSystemPrompts: h.modelStack().primaryBuilder.appendSystemPrompts,
-						tools: FULL_TOOLS,
+						access: "write",
+						childRuntime: h.resolveChildRuntime(h.modelStack().primaryBuilder, "write"),
 						thinking: h.roleThinking("builder"),
 						...spawn,
 						cwd: ctx.cwd,
@@ -603,6 +603,7 @@ export function registerAutoValidateCommand(pi: ExtensionAPI, h: HarnessDeps): v
 						} catch {
 							/* keep the in-memory copy */
 						}
+						const triageAccess = gateRepairUsed ? "read" : "validator";
 						await runChild({
 							run: validator,
 							prompt: triagePrompt(prompt, round, maxV, builder.text, gateHistory, artifactsDir),
@@ -610,7 +611,8 @@ export function registerAutoValidateCommand(pi: ExtensionAPI, h: HarnessDeps): v
 							// Repair power is enforced by TOOLS, not trust: while the run's single
 							// repair is unused, triage holds the validator's write (one dictated
 							// path); once spent, it drops back to strictly read-only eyes.
-							tools: gateRepairUsed ? READONLY_TOOLS : VALIDATOR_TOOLS,
+							access: triageAccess,
+							childRuntime: h.resolveChildRuntime(h.modelStack().architect, triageAccess),
 							thinking: h.roleThinking("architect"),
 							sessionDir: h.roleSession("architect", ctx.cwd).dir,
 							sessionId: h.roleSession("architect", ctx.cwd).id,

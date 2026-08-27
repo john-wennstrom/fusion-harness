@@ -68,6 +68,7 @@ import {
 	modelTag,
 	newRun,
 	fgHex,
+	resolveChildRuntime as resolveConfiguredChildRuntime,
 	ROLE_COLOR,
 	runError,
 	runOk,
@@ -304,6 +305,7 @@ export default function (pi: ExtensionAPI) {
 			builderSystemPrompt: roleSystemPrompt("builder"),
 		});
 	};
+	const resolveChildRuntime = (slot: ModelSlot, access: "none" | "read" | "write" | "validator") => resolveConfiguredChildRuntime(modelStack(), slot, access);
 
 	let childVisibleModelsPromise: Promise<Set<string>> | undefined;
 	const childVisibleModels = async (): Promise<Set<string>> => {
@@ -1182,7 +1184,7 @@ export default function (pi: ExtensionAPI) {
 				panel({ kind: "error", command: "fh-only", ok: false, agent: toStat(run), artifactsDir }, error instanceof Error ? error.message : String(error));
 				return;
 			}
-			await runChild({ run, prompt, systemPrompt: slot.systemPrompt, appendSystemPrompts: slot.appendSystemPrompts, tools: FULL_TOOLS, thinking: slot.thinking, ...slotInitialSpawn(slot, ctx, path.join(artifactsDir, slot.id)), cwd: ctx.cwd, timeoutMs: childTimeoutMs(), signal: stopper.signal });
+			await runChild({ run, prompt, systemPrompt: slot.systemPrompt, appendSystemPrompts: slot.appendSystemPrompts, access: "write", childRuntime: resolveChildRuntime(slot, "write"), thinking: slot.thinking, ...slotInitialSpawn(slot, ctx, path.join(artifactsDir, slot.id)), cwd: ctx.cwd, timeoutMs: childTimeoutMs(), signal: stopper.signal });
 			if (stopper.stopped()) {
 				stoppedPanel("fh-only", [run], artifactsDir, startedAt, `${slot.name} was stopped mid-answer.`);
 				return;
@@ -1264,6 +1266,7 @@ export default function (pi: ExtensionAPI) {
 		startGridWidget,
 		noteHost,
 		modelStack,
+		resolveChildRuntime,
 		architectModel,
 		builderModel,
 		newSlotRun,

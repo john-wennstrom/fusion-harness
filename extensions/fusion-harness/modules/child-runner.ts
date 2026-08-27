@@ -9,9 +9,10 @@
 
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { performance } from "node:perf_hooks";
-import { briefArg, runOk, type AgentRun } from "./runtime.ts";
+import { briefArg, runOk, type AgentRun, type ChildAccess, type ResolvedChildRuntime } from "./runtime.ts";
 
 const KILL_GRACE_MS = 5_000; // SIGTERM → SIGKILL escalation window
 
@@ -30,6 +31,42 @@ export function piInvocation(args: string[]): { command: string; args: string[] 
 	return { command: "pi", args };
 }
 
+function extensionEntryFromRoot(root: string): string | undefined {
+	try {
+		const pkgPath = path.join(root, "package.json");
+		if (!fs.existsSync(pkgPath)) return undefined;
+		const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8")) as { pi?: { extensions?: string[] } };
+		const entry = pkg?.pi?.extensions?.[0];
+		if (typeof entry !== "string" || !entry.trim()) return undefined;
+		const resolved = path.resolve(root, entry);
+		return fs.existsSync(resolved) ? resolved : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * Child slots can declare npm:/git: extension sources. Current pi builds accept
+ * file paths for -e reliably, so map source identifiers to their installed local
+ * entry file under PI_CODING_AGENT_DIR when possible.
+ */
+function resolveChildExtensionSource(source: string): string {
+	const agentDir = process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), ".pi", "agent");
+	if (source.startsWith("npm:")) {
+		const pkg = source.slice("npm:".length).trim();
+		if (!pkg) return source;
+		const root = path.join(agentDir, "npm", "node_modules", pkg);
+		return extensionEntryFromRoot(root) ?? source;
+	}
+	if (source.startsWith("git:")) {
+		const repo = source.slice("git:".length).trim();
+		if (!repo) return source;
+		const root = path.join(agentDir, "git", repo);
+		return extensionEntryFromRoot(root) ?? source;
+	}
+	return source;
+}
+
 /**
  * Spawn one `pi --mode json -p` child agent and stream its JSON events into `run`.
  * Final answer = last assistant text part. The child writes its session into a
@@ -40,7 +77,8 @@ export function runChild(opts: {
 	prompt: string;
 	systemPrompt?: string;
 	appendSystemPrompts?: string[]; // appended AFTER the base prompt (override or pi default) via pi's repeatable flag
-	tools: string | "none";
+	access: ChildAccess;
+	childRuntime: ResolvedChildRuntime;
 	thinking: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 	sessionDir: string;
 	sessionId?: string; // stable per-role session — the agent keeps its context across commands
@@ -52,6 +90,7 @@ export function runChild(opts: {
 }): Promise<AgentRun> {
 	const run = opts.run;
 	run.thinking = opts.thinking;
+	const runtime = opts.childRuntime ?? { extensions: [], tools: [] };
 	// Clean-room spawn: children never load skills, extensions (recursion guard), or
 	// context files — their entire contract comes from the harness's prompt files.
 	const args: string[] = [
@@ -79,8 +118,9 @@ export function runChild(opts: {
 	for (const append of opts.appendSystemPrompts ?? []) {
 		if (append.trim()) args.push("--append-system-prompt", append);
 	}
-	if (opts.tools === "none") args.push("--no-tools");
-	else args.push("--tools", opts.tools);
+	for (const extension of runtime.extensions) args.push("-e", resolveChildExtensionSource(extension));
+	if (opts.access === "none") args.push("--no-tools");
+	else args.push("--tools", runtime.tools.join(","));
 	args.push(opts.prompt);
 
 	return new Promise<AgentRun>((resolve) => {

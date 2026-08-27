@@ -12,6 +12,7 @@ const sourceFiles = [
     .map((file) => join(root, "modules", file)),
 ];
 const source = sourceFiles.map((file) => readFileSync(file, "utf8")).join("\n");
+const fusionSource = readFileSync(join(root, "modules", "cmd-fusion.ts"), "utf8");
 const prompt = (name: string) => readFileSync(join(root, "prompts", name), "utf8");
 
 describe("orchestration contracts", () => {
@@ -34,13 +35,16 @@ describe("orchestration contracts", () => {
   });
 
   test("fusion has read-only sources, one full-tool fuser, and no-tools ACKs", () => {
-    expect(source).toContain("prompt: workerPrompt(slot, stack, prompt)");
-    expect(source).toContain("tools: READONLY_TOOLS");
-    expect(source).toContain('SYSTEM_PROMPT_FUSION.md');
-    expect(source).toContain('tools: "none"');
-    expect(source).toContain('splitUtf8(fuser.text, 80_000)');
-    expect(source).toContain('display: false');
-    expect(source).toContain("ACK FUSION ${runId}");
+    expect(fusionSource).toContain('prompt: workerPrompt(slot, stack, prompt)');
+    expect(fusionSource).toContain('access: "read", childRuntime: h.resolveChildRuntime(slot, "read")');
+    expect(fusionSource).toContain('SYSTEM_PROMPT_FUSION.md');
+    expect(fusionSource).toContain('prompt: fuserPrompt(fusionInstruction, prompt, runs, fuser.model, stack.architect.thinking, artifactsDir)');
+    expect(fusionSource).toContain('access: "write", childRuntime: h.resolveChildRuntime(stack.architect, "write")');
+    expect(fusionSource).toContain('access: "none"');
+    expect(fusionSource).toContain('h.resolveChildRuntime(slot, "none")');
+    expect(fusionSource).toContain('splitUtf8(fuser.text, 80_000)');
+    expect(fusionSource).toContain('display: false');
+    expect(fusionSource).toContain("ACK FUSION ${runId}");
     expect(prompt("USER_PROMPT_FUSION_WORKER.md")).toContain("ONLY agent allowed to modify");
     expect(prompt("USER_PROMPT_FUSION_MERGE.md")).toContain("ONLY process permitted to modify");
   });
@@ -63,7 +67,8 @@ describe("orchestration contracts", () => {
     expect(source).toContain("maxConcurrentWriteEnabledChildren");
     expect(source).toContain("acquireWriterLease(ctx.cwd, `/fh-collaborate");
     expect(source).toContain("parseStrictJsonObject(architectRun.text");
-    expect(source).toContain("tools: READONLY_TOOLS");
+    expect(source).toContain('access: "read"');
+    expect(source).toContain('access: "write"');
     expect(source).toContain("worktreeCommandsObserved");
     expect(prompt("USER_PROMPT_COLLAB_EXECUTE.md")).toContain("one shared working directory");
     expect(prompt("SYSTEM_PROMPT_COLLAB_COORDINATOR.md")).toContain("at most one write-enabled child");
@@ -88,6 +93,13 @@ describe("orchestration contracts", () => {
     expect(source).toContain('args.push("--append-system-prompt", append)');
     expect(source).toContain("appendSystemPrompts: slot.appendSystemPrompts");
     expect(source).toContain("appendSystemPrompts: stack.architect.appendSystemPrompts");
+  });
+
+  test("child access is resolved centrally", () => {
+    expect(source).toContain("resolveChildRuntime(stack: ModelStack, slot: ModelSlot, access: ChildAccess)");
+    expect(source).toContain('if (access === "none") return { extensions: [], tools: [] }');
+    expect(source).toContain('for (const extension of runtime.extensions) args.push("-e", resolveChildExtensionSource(extension))');
+    expect(source).toContain('if (opts.access === "none") args.push("--no-tools")');
   });
 
   test("session identities hash full model and project paths", () => {
