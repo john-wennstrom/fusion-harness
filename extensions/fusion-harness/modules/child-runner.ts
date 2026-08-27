@@ -78,7 +78,7 @@ export function runChild(opts: {
 	systemPrompt?: string;
 	appendSystemPrompts?: string[]; // appended AFTER the base prompt (override or pi default) via pi's repeatable flag
 	access: ChildAccess;
-	childRuntime?: ResolvedChildRuntime;
+	childRuntime: ResolvedChildRuntime;
 	thinking: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 	sessionDir: string;
 	sessionId?: string; // stable per-role session — the agent keeps its context across commands
