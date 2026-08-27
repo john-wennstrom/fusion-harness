@@ -14,6 +14,8 @@ import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { runChild, runProc } from "./child-runner.ts";
 import { validateCollaborationPlan, type CollaborationTask, type ValidatedCollaborationPlan } from "./collaboration-graph.ts";
+import { renderDelegationPlan } from "./collaboration-render.ts";
+import { renderTaskboard, type CollaborationTaskState } from "./collaboration-taskboard.ts";
 import { orderedSlots, slotId } from "./model-stack.ts";
 import {
 	builderPrompt,
@@ -153,17 +155,7 @@ export function registerCollaborateCommand(pi: ExtensionAPI, h: HarnessDeps): vo
 					return;
 				}
 				// The task breakdown is itself a deliverable — render it before executing.
-				const planBody = [
-					`### Delegation plan — ${plan.tasks.length} task${plan.tasks.length === 1 ? "" : "s"} · ${plan.waves.length} dependency level${plan.waves.length === 1 ? "" : "s"}`,
-					"",
-					"| task | owner | mode | depends on |",
-					"|---|---|---|---|",
-					...plan.tasks.map((task) => `| ${task.id} | ${task.assignee} | ${task.mode} | ${task.depends_on.join(", ") || "—"} |`),
-					"",
-					`Parallelism by level: ${plan.waves.map((wave, index) => `${index + 1}) ${wave.map((task) => task.id).join(" ∥ ")}`).join("  →  ")}`,
-					"",
-					...plan.tasks.map((task) => `- **${task.id}** (${task.assignee}, ${task.mode}) — ${task.description}`),
-				].join("\n");
+				const planBody = renderDelegationPlan(plan);
 				h.panel({ kind: "solo", command: "fh-collaborate", ok: true, agent: toStat(architectRun), artifactsDir }, planBody);
 
 				try {
@@ -180,19 +172,14 @@ export function registerCollaborateCommand(pi: ExtensionAPI, h: HarnessDeps): vo
 				// write-enabled child ever runs). Plan order is the FIFO tiebreak.
 				const reportsDir = path.join(collabDir, "reports");
 				await fs.promises.mkdir(reportsDir, { recursive: true });
-				type TaskState = "blocked" | "queued" | "reading" | "writing" | "done" | "failed";
-				const taskState = new Map<string, TaskState>(plan.tasks.map((task) => [task.id, "blocked"]));
+				const taskState = new Map<string, CollaborationTaskState>(plan.tasks.map((task) => [task.id, "blocked"]));
 				const taskReports = new Map<string, string>();
 				const busySlots = new Set<string>();
 				const inFlight = new Map<string, Promise<void>>();
 				let executionFailure: string | undefined;
-				const TASK_GLYPH: Record<TaskState, string> = { blocked: "○", queued: "◌", reading: "◐", writing: "●", done: "✓", failed: "✗" };
 				const renderBoard = () => {
 					try {
-						ctx.ui.setWidget(TASKBOARD_WIDGET, [
-							`⇄ TASKS · ${[...taskState.values()].filter((state) => state === "done").length}/${plan!.tasks.length} done · reads overlap · ONE writer at a time`,
-							...plan!.tasks.map((task) => `  ${TASK_GLYPH[taskState.get(task.id)!]} ${task.id} · ${task.assignee} · ${task.mode} · ${taskState.get(task.id)} · ${task.description.replace(/\s+/g, " ").slice(0, 60)}${task.description.length > 60 ? "…" : ""}`),
-						], { placement: "belowEditor" });
+						ctx.ui.setWidget(TASKBOARD_WIDGET, renderTaskboard(plan!, taskState, { subtitle: "reads overlap · ONE writer at a time" }), { placement: "belowEditor" });
 					} catch {}
 				};
 				const depsDone = (task: CollaborationTask): boolean => task.depends_on.every((dep) => taskState.get(dep) === "done");

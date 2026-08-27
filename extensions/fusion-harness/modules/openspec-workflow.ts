@@ -4,9 +4,11 @@ import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { runChild, runProc } from "./child-runner.ts";
 import { validateCollaborationPlan, type CollaborationTask, type ValidatedCollaborationPlan } from "./collaboration-graph.ts";
+import { renderDelegationPlan } from "./collaboration-render.ts";
+import { renderTaskboard, type CollaborationTaskState } from "./collaboration-taskboard.ts";
 import type { ModelSlot } from "./model-stack.ts";
 import { collabExecutePrompt, collabProposePrompt, contractSystemPrompt, openSpecArtifactPrompt, openSpecCollaboratePrompt, openSpecDebatePrompt, openSpecDesignPrompt, openSpecTasksPrompt, parseStrictJsonObject } from "./prompt-library.ts";
-import { newRun, runError, runOk, toStat, type AgentRun, type HarnessDeps } from "./runtime.ts";
+import { CUSTOM_TYPE, newRun, runError, runOk, toStat, type AgentRun, type HarnessDeps } from "./runtime.ts";
 import { acquireWriterLease, type WriterLease } from "./writer-lease.ts";
 
 export interface OpenSpecArtifact { name: string; path: string; content?: string; contextFiles: string[]; }
@@ -124,6 +126,7 @@ export async function runFusionArtifact(h: HarnessDeps, ctx: any, slot: ModelSlo
 
 export async function runOpenSpecCollaboratePhase(h: HarnessDeps, ctx: any, change: string, phase: OpenSpecPhase, context: string): Promise<void> {
 	const stack = h.modelStack();
+	const TASKBOARD_WIDGET = `${CUSTOM_TYPE}-taskboard`;
 	const taskIds = phase.tasks.map((task, index) => `${phase.number}.${String.fromCharCode(97 + index)}`);
 	const taskById = new Map(phase.tasks.map((task, index) => [taskIds[index], task]));
 	const taskText = phase.tasks.map((task, index) => `- ${taskIds[index]} (OpenSpec task ${task.id}): ${task.description}`).join("\n");
@@ -146,23 +149,58 @@ export async function runOpenSpecCollaboratePhase(h: HarnessDeps, ctx: any, chan
 	const plan = validateCollaborationPlan(rawPlan, stack.slots.map((slot) => slot.id));
 	if (plan.tasks.some((task) => !taskById.has(task.id))) throw new Error("phase delegation referenced a task outside the selected OpenSpec phase");
 	if (plan.tasks.length !== taskIds.length || taskIds.some((id) => !plan.tasks.some((task) => task.id === id))) throw new Error("phase delegation must assign every selected OpenSpec task exactly once");
-	h.panel({ kind: "solo", command: "implement", ok: true, prompt: change, agent: toStat(planRun) }, `IMPLEMENT — DELEGATION PLAN\n\n${JSON.stringify(rawPlan, null, 2)}`);
+	const planBody = renderDelegationPlan(plan, {
+		heading: "IMPLEMENT — DELEGATION PLAN",
+		describeTask: (task) => {
+			const original = taskById.get(task.id)!;
+			return `OpenSpec ${original.id}: ${original.description}`;
+		},
+	});
+	h.panel({ kind: "solo", command: "implement", ok: true, prompt: change, agent: toStat(planRun) }, planBody);
 
 	const executionRuns = stack.slots.map((slot) => newRun(slot.architect ? "ARCHITECT" : "BUILDER", slot.model, slot));
 	const executionWidget = h.startGridWidget(ctx, "implement", executionRuns, undefined, Date.now());
+	const taskState = new Map<string, CollaborationTaskState>(plan.tasks.map((task) => [task.id, "blocked"]));
+	const renderBoard = (): void => {
+		try {
+			ctx.ui.setWidget(TASKBOARD_WIDGET, renderTaskboard(plan, taskState, {
+				subtitle: `phase ${phase.number}`,
+				descriptionMaxChars: 56,
+				describeTask: (task) => {
+					const original = taskById.get(task.id)!;
+					return `OpenSpec ${original.id}: ${original.description}`;
+				},
+			}), { placement: "belowEditor" });
+		} catch {}
+	};
+	renderBoard();
 	try {
 		for (const wave of plan.waves) {
+			for (const task of wave) if (taskState.get(task.id) === "blocked") taskState.set(task.id, "queued");
+			renderBoard();
 			for (const task of wave) {
 				const slot = stack.slots.find((candidate) => candidate.id === task.assignee)!;
 				const run = executionRuns.find((candidate) => candidate.slot?.id === slot.id)!;
 				const original = taskById.get(task.id)!;
 				const handoff = `OpenSpec task ${original.id}. Requirements: ${original.requirements.join(", ") || "see specs"}. Scenarios: ${original.scenarios.join(", ") || "see specs"}. Verify commands: ${original.verifyCommands.join(", ") || "none"}.`;
+				taskState.set(task.id, task.mode === "read" ? "reading" : "writing");
+				renderBoard();
 				await runChild({ run, prompt: collabExecutePrompt(slot, `Implement OpenSpec change ${change}, phase ${phase.number} — ${phase.title}.`, task, handoff), systemPrompt: slot.systemPrompt, appendSystemPrompts: slot.appendSystemPrompts, access: task.mode === "read" ? "read" : "write", childRuntime: h.resolveChildRuntime(slot, task.mode === "read" ? "read" : "write"), thinking: slot.thinking, ...h.slotNextSpawn(slot, run, h.slotInitialSpawn(slot, ctx, await h.mkArtifacts()), ctx), cwd: ctx.cwd, timeoutMs: h.buildTimeoutMs() });
-				if (!runOk(run)) throw new Error(`task ${original.id} (${slot.id}) failed: ${runError(run)}`);
+				if (!runOk(run)) {
+					taskState.set(task.id, "failed");
+					renderBoard();
+					throw new Error(`task ${original.id} (${slot.id}) failed: ${runError(run)}`);
+				}
+				taskState.set(task.id, "done");
+				renderBoard();
 				h.panel({ kind: "solo", command: "implement", ok: true, prompt: change, agent: toStat(run) }, `IMPLEMENT — TASK ${original.id}\n\n${run.text}`);
 			}
 		}
-	} finally { executionWidget(); h.absorbRuns(executionRuns); }
+	} finally {
+		executionWidget();
+		h.absorbRuns(executionRuns);
+		try { ctx.ui.setWidget(TASKBOARD_WIDGET, undefined); } catch {}
+	}
 }
 
 function artifactPrompt(change: string, artifact: string, context: string, instruction: string): string {
