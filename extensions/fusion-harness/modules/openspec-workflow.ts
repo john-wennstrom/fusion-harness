@@ -6,7 +6,7 @@ import { runChild, runProc } from "./child-runner.ts";
 import { validateCollaborationPlan, type CollaborationTask, type ValidatedCollaborationPlan } from "./collaboration-graph.ts";
 import { renderDelegationPlan } from "./collaboration-render.ts";
 import { renderTaskboard, type CollaborationTaskState } from "./collaboration-taskboard.ts";
-import type { ModelSlot } from "./model-stack.ts";
+import { slotId, type ModelSlot } from "./model-stack.ts";
 import { collabExecutePrompt, collabProposePrompt, contractSystemPrompt, openSpecArtifactPrompt, openSpecCollaboratePrompt, openSpecDebatePrompt, openSpecDesignPrompt, openSpecTasksPrompt, parseStrictJsonObject } from "./prompt-library.ts";
 import { CUSTOM_TYPE, newRun, runError, runOk, toStat, type AgentRun, type HarnessDeps } from "./runtime.ts";
 import { acquireWriterLease, type WriterLease } from "./writer-lease.ts";
@@ -142,13 +142,52 @@ export async function runOpenSpecCollaboratePhase(h: HarnessDeps, ctx: any, chan
 	if (proposalRuns.filter(runOk).length < 2) throw new Error("phase collaboration needs at least two successful agent proposals");
 
 	const planRun = newRun("ARCHITECT", stack.architect.model, stack.architect);
-	const planPrompt = openSpecCollaboratePrompt(change, phase.number, phase.title, taskText, stack.slots.map((slot) => slot.id).join(", "), taskIds[0], stack.slots[0].id, `${context}\n\nPROPOSALS:\n${proposalRuns.map((run) => `## ${run.slot?.name}\n${run.text}`).join("\n\n")}`);
-	await runChild({ run: planRun, prompt: planPrompt, systemPrompt: contractSystemPrompt(stack.architect.systemPrompt, "SYSTEM_PROMPT_COLLAB_COORDINATOR.md"), appendSystemPrompts: stack.architect.appendSystemPrompts, access: "read", childRuntime: h.resolveChildRuntime(stack.architect, "read"), thinking: stack.architect.thinking, ...h.slotInitialSpawn(stack.architect, ctx, await h.mkArtifacts()), cwd: ctx.cwd, timeoutMs: h.childTimeoutMs() });
-	if (!runOk(planRun)) throw new Error(`phase delegation failed: ${runError(planRun)}`);
-	const rawPlan = parseStrictJsonObject(planRun.text, "phase delegation plan");
-	const plan = validateCollaborationPlan(rawPlan, stack.slots.map((slot) => slot.id));
-	if (plan.tasks.some((task) => !taskById.has(task.id))) throw new Error("phase delegation referenced a task outside the selected OpenSpec phase");
-	if (plan.tasks.length !== taskIds.length || taskIds.some((id) => !plan.tasks.some((task) => task.id === id))) throw new Error("phase delegation must assign every selected OpenSpec task exactly once");
+	const basePlanPrompt = openSpecCollaboratePrompt(change, phase.number, phase.title, taskText, stack.slots.map((slot) => slot.id).join(", "), taskIds[0], stack.slots[0].id, `${context}\n\nPROPOSALS:\n${proposalRuns.map((run) => `## ${run.slot?.name}\n${run.text}`).join("\n\n")}`);
+	const architectSpawn = h.slotInitialSpawn(stack.architect, ctx, await h.mkArtifacts());
+	let plan: ValidatedCollaborationPlan | undefined;
+	let rawPlan: Record<string, unknown> | undefined;
+	let planError = "";
+	for (let attempt = 1; attempt <= 3; attempt++) {
+		ctx.ui.setStatus("fusion-harness", `implement: architect building delegation plan${attempt > 1 ? ` (repair ${attempt - 1})` : ""}…`);
+		const repairHint = planError
+			? `\n\nPREVIOUS PLAN VALIDATION FAILED:\n${planError}\nReturn one corrected raw JSON object only. No markdown, no prose, no code fences.`
+			: "";
+		const prompt = `${basePlanPrompt}${repairHint}`;
+		await runChild({
+			run: planRun,
+			prompt,
+			systemPrompt: contractSystemPrompt(stack.architect.systemPrompt, "SYSTEM_PROMPT_COLLAB_COORDINATOR.md"),
+			appendSystemPrompts: stack.architect.appendSystemPrompts,
+			access: "read",
+			childRuntime: h.resolveChildRuntime(stack.architect, "read"),
+			thinking: stack.architect.thinking,
+			...(attempt === 1 ? architectSpawn : h.slotNextSpawn(stack.architect, planRun, architectSpawn, ctx)),
+			cwd: ctx.cwd,
+			timeoutMs: h.childTimeoutMs(),
+		});
+		if (!runOk(planRun)) throw new Error(`phase delegation failed: ${runError(planRun)}`);
+		try {
+			const parsedPlan = parseStrictJsonObject(planRun.text, "phase delegation plan");
+			if (Array.isArray((parsedPlan as Record<string, unknown>).tasks)) {
+				for (const rawTask of (parsedPlan as { tasks: unknown[] }).tasks) {
+					if (rawTask && typeof rawTask === "object" && typeof (rawTask as Record<string, unknown>).assignee === "string") {
+						(rawTask as Record<string, string>).assignee = slotId((rawTask as Record<string, string>).assignee);
+					}
+				}
+			}
+			const candidatePlan = validateCollaborationPlan(parsedPlan, stack.slots.map((slot) => slot.id));
+			if (candidatePlan.tasks.some((task) => !taskById.has(task.id))) throw new Error("phase delegation referenced a task outside the selected OpenSpec phase");
+			if (candidatePlan.tasks.length !== taskIds.length || taskIds.some((id) => !candidatePlan.tasks.some((task) => task.id === id))) throw new Error("phase delegation must assign every selected OpenSpec task exactly once");
+			plan = candidatePlan;
+			rawPlan = parsedPlan;
+			break;
+		} catch (error) {
+			planError = error instanceof Error ? error.message : String(error);
+			plan = undefined;
+			rawPlan = undefined;
+		}
+	}
+	if (!plan || !rawPlan) throw new Error(`phase delegation failed after 3 attempts:\n${planError}`);
 	const planBody = renderDelegationPlan(plan, {
 		heading: "IMPLEMENT — DELEGATION PLAN",
 		describeTask: (task) => {
