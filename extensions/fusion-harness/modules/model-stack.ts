@@ -126,22 +126,22 @@ function codenameFromPath(configPath: string): string {
 	return base.replace(/^model-stack-/, "") || "stack";
 }
 
-function parseChildExtensions(raw: unknown, configDir: string, label: string, errors: string[]): string[] | undefined {
+function parseExtensionsField(raw: unknown, configDir: string, label: string, errors: string[]): string[] | undefined {
 	if (raw === undefined) return undefined;
 	if (!Array.isArray(raw)) {
-		errors.push(`${label}.extensions must be an array of extension sources`);
+		errors.push(`${label} must be an array of extension sources`);
 		return undefined;
 	}
 	const extensions: string[] = [];
 	for (let index = 0; index < raw.length; index++) {
 		const entry = raw[index];
 		if (typeof entry !== "string") {
-			errors.push(`${label}.extensions[${index}] must be a string`);
+			errors.push(`${label}[${index}] must be a string`);
 			continue;
 		}
 		const normalized = normalizeExtensionSource(entry.trim(), configDir);
 		if (!normalized) {
-			errors.push(`${label}.extensions[${index}] must not be empty`);
+			errors.push(`${label}[${index}] must not be empty`);
 			continue;
 		}
 		extensions.push(normalized);
@@ -149,25 +149,25 @@ function parseChildExtensions(raw: unknown, configDir: string, label: string, er
 	return extensions;
 }
 
-function parseChildTools(raw: unknown, label: string, errors: string[]): ChildToolConfig | undefined {
+function parseToolsField(raw: unknown, label: string, errors: string[]): ChildToolConfig | undefined {
 	if (raw === undefined) return undefined;
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-		errors.push(`${label}.tools must be a mapping`);
+		errors.push(`${label} must be a mapping`);
 		return undefined;
 	}
 	const toolsValue = raw as Record<string, unknown>;
 	const allowedToolKeys = new Set(["read", "write"]);
 	for (const key of Object.keys(toolsValue)) {
-		if (!allowedToolKeys.has(key)) errors.push(`${label}.tools contains unknown key ${JSON.stringify(key)}`);
+		if (!allowedToolKeys.has(key)) errors.push(`${label} contains unknown key ${JSON.stringify(key)}`);
 	}
-	const read = parseToolEntry(toolsValue.read, `${label}.tools.read`, errors);
-	const write = parseToolEntry(toolsValue.write, `${label}.tools.write`, errors);
+	const read = parseToolEntry(toolsValue.read, `${label}.read`, errors);
+	const write = parseToolEntry(toolsValue.write, `${label}.write`, errors);
 	if (read === undefined && write === undefined) return undefined;
 
 	const readList = explicitIncludes(read);
 	const writeList = explicitIncludes(write);
 	for (const name of readList) {
-		if (writeList.includes(name)) errors.push(`${label}.tools declares ${JSON.stringify(name)} as both read and write`);
+		if (writeList.includes(name)) errors.push(`${label} declares ${JSON.stringify(name)} as both read and write`);
 	}
 
 	const tools: ChildToolConfig = {};
@@ -218,19 +218,21 @@ function explicitIncludes(value: string[] | ChildToolRule | undefined): string[]
 	return value.include ?? [];
 }
 
-function parseChildConfig(raw: unknown, configDir: string, label: string, errors: string[]): ChildConfig | undefined {
-	if (raw === undefined || raw === null) return undefined;
-	if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-		errors.push(`${label} must be a mapping`);
-		return undefined;
-	}
-	const value = raw as Record<string, unknown>;
-	const allowedKeys = new Set(["extensions", "tools"]);
-	for (const key of Object.keys(value)) if (!allowedKeys.has(key)) errors.push(`${label} contains unknown key ${JSON.stringify(key)}`);
-
-	const extensions = parseChildExtensions(value.extensions, configDir, label, errors);
-	const tools = parseChildTools(value.tools, label, errors);
-
+/**
+ * Read the flat `extensions:` and `tools:` fields at the current level (top-level
+ * or per-agent). Both are optional; returns undefined when neither is present.
+ */
+function readRuntimeFields(
+	value: Record<string, unknown>,
+	configDir: string,
+	labelPrefix: string,
+	errors: string[],
+): ChildConfig | undefined {
+	const extensionsLabel = labelPrefix ? `${labelPrefix}.extensions` : "extensions";
+	const toolsLabel = labelPrefix ? `${labelPrefix}.tools` : "tools";
+	const extensions = parseExtensionsField(value.extensions, configDir, extensionsLabel, errors);
+	const tools = parseToolsField(value.tools, toolsLabel, errors);
+	if (extensions === undefined && tools === undefined) return undefined;
 	const config: ChildConfig = {};
 	if (extensions !== undefined) config.extensions = extensions;
 	if (tools !== undefined) config.tools = tools;
@@ -301,9 +303,9 @@ export function loadModelStack(configPathInput: string): ModelStack {
 		slotEntries = parsed;
 	} else if (parsed && typeof parsed === "object") {
 		const top = parsed as Record<string, unknown>;
-		const allowedTopKeys = new Set(["child", "slots"]);
+		const allowedTopKeys = new Set(["extensions", "tools", "slots"]);
 		for (const key of Object.keys(top)) if (!allowedTopKeys.has(key)) errors.push(`top-level object contains unknown key ${JSON.stringify(key)}`);
-		globalChild = parseChildConfig(top.child, path.dirname(configPath), "child", errors);
+		globalChild = readRuntimeFields(top, path.dirname(configPath), "", errors);
 		if (!Array.isArray(top.slots)) {
 			errors.push("top-level object field slots must be a list of model slots");
 			slotEntries = [];
@@ -329,7 +331,7 @@ export function loadModelStack(configPathInput: string): ModelStack {
 			continue;
 		}
 		const value = raw as Record<string, unknown>;
-		const allowedKeys = new Set(["name", "model", "thinking", "color", "architect", "primary", "system_prompt", "append_system_prompt", "child"]);
+		const allowedKeys = new Set(["name", "model", "thinking", "color", "architect", "primary", "system_prompt", "append_system_prompt", "extensions", "tools"]);
 		for (const key of Object.keys(value)) if (!allowedKeys.has(key)) errors.push(`${label} contains unknown key ${JSON.stringify(key)}`);
 		const name = typeof value.name === "string" ? value.name.trim() : "";
 		if (!SLOT_NAME_RE.test(name)) errors.push(`${label}.name must match [A-Za-z0-9_-]+ and be 1-16 characters; found ${JSON.stringify(value.name)}`);
@@ -370,7 +372,7 @@ export function loadModelStack(configPathInput: string): ModelStack {
 				if (resolved.text?.trim()) appendSystemPrompts.push(resolved.text);
 			}
 		}
-		const child = parseChildConfig(value.child, configDir, `${label}.child`, errors);
+		const child = readRuntimeFields(value, configDir, label, errors);
 		drafts.push({
 			id,
 			name: name || `slot-${index + 1}`,

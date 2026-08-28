@@ -1,0 +1,40 @@
+# The atlas stack — the trio models in the flat schema.
+# Top-level `extensions:` and `tools:` are global defaults for every slot.
+# Per-slot `extensions:` and `tools:` override the global values.
+#
+# Example (commented) of the global runtime block — uncomment to enable:
+extensions:
+  - npm:@acme/pi-readonly-pack
+  - ./local-tools/extra-extension
+tools:
+  read:
+    include: ["todo_read", "docs_index"]
+  write:
+    include: ["apply_patch_plus"]
+
+slots:
+  - name: fable
+    model: anthropic/claude-fable-5
+    thinking: medium
+    architect: true
+    color: "#A78BFA"
+
+  - name: sol
+    model: openai/gpt-5.6-sol
+    thinking: medium
+    primary: true
+    color: "#F59E0B"
+    # Example (commented) of a per-slot override:
+    tools:
+      read:
+        inherit: true
+        include: ["repo_metrics"]
+        exclude: ["docs_index"]
+      write:
+        inherit: false
+        include: ["write_gate_file"]
+
+  - name: terra
+    model: openai/gpt-5.6-terra
+    thinking: medium
+    color: "#22D3EE"
