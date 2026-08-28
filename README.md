@@ -85,7 +85,7 @@ The extension selects the configured primary builder as Pi's live host model. In
 `--fh-config <path>` accepts either:
 
 - A YAML list of slots (legacy form), or
-- A top-level object with `slots` plus optional global `child` defaults.
+- A top-level object with `slots` plus optional global `extensions` and `tools` defaults.
 
 List form (still valid):
 
@@ -108,18 +108,17 @@ List form (still valid):
   color: "#22D3EE"
 ```
 
-Object form with global child defaults and per-slot override:
+Object form with global runtime defaults and per-slot overrides:
 
 ```yaml
-child:
-  extensions:
-    - npm:@acme/pi-readonly-pack
-    - ./local-tools/extra-extension
-  tools:
-    read:
-      include: ["todo_read", "docs_index"]
-    write:
-      include: ["apply_patch_plus"]
+extensions:
+  - npm:@acme/pi-readonly-pack
+  - ./local-tools/extra-extension
+tools:
+  read:
+    include: ["todo_read", "docs_index"]
+  write:
+    include: ["apply_patch_plus"]
 
 slots:
   - name: fable
@@ -131,15 +130,14 @@ slots:
     model: openai/gpt-5.6-sol
     thinking: xhigh
     primary: true
-    child:
-      tools:
-        read:
-          inherit: true
-          include: ["repo_metrics"]
-          exclude: ["docs_index"]
-        write:
-          inherit: false
-          include: ["write_gate_file"]
+    tools:
+      read:
+        inherit: true
+        include: ["repo_metrics"]
+        exclude: ["docs_index"]
+      write:
+        inherit: false
+        include: ["write_gate_file"]
 ```
 
 Rules:
@@ -147,27 +145,27 @@ Rules:
 - 2–5 slots.
 - Exactly one `architect: true`.
 - Exactly one **non-architect** `primary: true`; `primary` is only for the Main builder.
-- Top-level object may contain only `slots` and optional `child`.
+- Top-level object may contain only `slots` plus optional `extensions` and `tools`.
 - Unique 1–16 character names (`A-Za-z0-9_-`).
 - Fully qualified `provider/id` models with configured authentication and visibility in clean-room children launched with `--no-extensions`. Models registered only by another extension are rejected.
 - Thinking: `off|minimal|low|medium|high|xhigh|max` (short aliases accepted).
 - Colors are actual quoted `#RRGGBB` values. Omitted colors use a stable per-stack hash.
 - `system_prompt` may be inline or a path relative to the YAML file (full override of pi's default).
 - `append_system_prompt` takes one entry or a list — each inline text or a YAML-relative file path — appended in order AFTER the slot's base prompt (the `system_prompt` override, or pi's own default when unset; harness contract prompts come before user appends). Children receive them via pi's repeatable `--append-system-prompt`, so the default prompt is never rebuilt. `/fh-system-prompt` shows the effective result.
-- `child` is supported at top level (global default) and per slot:
+- `extensions` and `tools` are supported at top level (global default) and per slot:
   - `extensions`: list of extension sources (`npm:...`, `git:...`, absolute path, or relative path).
   - `tools.read` and `tools.write`: either a simple list of tool names, or an object:
     - `inherit: boolean`
     - `include: [tool, ...]`
     - `exclude: [tool, ...]`
 - Tool rule semantics:
-  - Global `child.tools.*` starts from empty.
-  - Slot `child.tools.*` defaults to `inherit: true` when using object form.
+  - Global `tools.*` starts from empty.
+  - Per-slot `tools.*` defaults to `inherit: true` when using object form.
   - List form is equivalent to `inherit: false` + `include: [...]`.
   - A tool cannot appear in both `include` and `exclude` in the same rule.
   - A tool cannot be declared in both `read` and `write` at the same scope.
 - Runtime merge behavior:
-  - Extensions are not merged: slot `child.extensions` replaces global `child.extensions` for that slot.
+  - Extensions are not merged: per-slot `extensions` replaces the global `extensions` for that slot.
   - Tools are merged by rule semantics above.
   - Extra `read` tools are available in read/write/validator runs.
   - Extra `write` tools are available only in write-enabled runs.
