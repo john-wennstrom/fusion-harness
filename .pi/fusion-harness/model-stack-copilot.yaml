@@ -1,0 +1,27 @@
+# Frontier stack on a GitHub Copilot subscription - no provider API keys required.
+# Auth once with `pi` -> `/login` -> GitHub Copilot. Models must also be enabled in
+# VS Code (Copilot Chat -> model picker -> Enable) or pi returns "model not supported".
+# Swap any `model:` for another `github-copilot/<id>` from `pi --list-models copilot`.
+# Three vendors on purpose: agreement across them is the signal worth paying for.
+- name: rune
+  model: github-copilot/claude-opus-5
+  thinking: high
+  architect: true
+  color: "#7DD3FC"
+  append_system_prompt:
+    - ../../system_prompt_fixing_opus_5_great_communication.md
+
+- name: sol
+  model: github-copilot/gpt-5.6-sol
+  thinking: medium
+  primary: true
+  color: "#F59E0B"
+  append_system_prompt:
+    - ../../system_prompt_fixing_opus_5_great_communication.md
+
+- name: nova
+  model: github-copilot/gemini-3.7-flash
+  thinking: medium
+  color: "#34D399"
+  append_system_prompt:
+    - ../../system_prompt_fixing_opus_5_great_communication.md

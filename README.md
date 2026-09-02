@@ -45,6 +45,9 @@ npm test                                         # 34 deterministic tests, zero 
 
 Note: pi reads `GEMINI_API_KEY` for the google provider (not `GOOGLE_GENERATIVE_AI_API_KEY`).
 
+To use one GitHub Copilot subscription instead of provider API keys, see
+**[docs/copilot-setup.md](docs/copilot-setup.md)** or run `/install-copilot` in an agent.
+
 ---
 
 ## Why fusion
@@ -79,6 +82,68 @@ just fh-workhorse   # cheap pair · just fh-sota for the frontier pair
 ```
 
 The extension selects the configured primary builder as Pi's live host model. Invalid/unavailable stacks fail startup.
+
+## Headless read-only protocols
+
+`harness/` exposes opinion and debate without Pi's TUI. It reuses the extension's real child runner,
+model-stack loader and prompt contracts, so both entry points send the same prompts to the same
+clean-room children.
+
+```bash
+just stack
+just opinion "review this architecture"
+just debate "proposition to test" --rounds 3
+```
+
+The same protocols are available over MCP as `fusion_stack`, `fusion_opinion` and `fusion_debate`.
+Copy `.vscode/mcp.json.example` to `.vscode/mcp.json`, set `command` to an absolute Node 22.19+ path,
+then run the free transport check:
+
+```bash
+node harness/smoke-mcp.ts --stack-only
+```
+
+Omitting `--stack-only` adds one real opinion fan-out and costs one model request per configured slot.
+For user-profile MCP registration, use absolute entry/config paths and omit `cwd` and `FH_MCP_CWD`;
+the server requests the client's current workspace root on every call. `FH_MCP_CWD` remains available
+when the inspected directory must be fixed explicitly.
+
+Only the read-only protocols are exposed over MCP. Fusion and collaboration retain their CWD writer
+lease inside the extension, where an MCP client cannot become an unseen second writer. Child agents get
+only `read`, `grep`, `find` and `ls`, but those tools accept absolute paths and are not confined to the
+workspace. Use process-level isolation when inspecting untrusted repositories or repositories containing
+live credentials.
+
+## GitHub Copilot subscription
+
+The optional Copilot stack runs three vendors through Pi's `github-copilot` provider, using one GitHub
+Copilot subscription instead of separate provider API keys:
+
+```bash
+just copilot-stack
+just fusion-copilot
+just copilot-opinion "review this architecture"
+just copilot-debate "proposition to test" --rounds 3
+```
+
+GitHub Copilot and Fusion Harness are complementary layers. Copilot is the IDE-native coding agent;
+Fusion Harness is the multi-model deliberation and coordination layer it can call through MCP.
+
+| | GitHub Copilot in VS Code | Fusion Harness |
+| --- | --- | --- |
+| Primary role | General coding agent and IDE operator | Multi-model deliberation and coordination |
+| Models per protocol turn | One selected model | 2–5 configured models |
+| Context | Editor, workspace and current chat | Explicit prompt plus repository inspection |
+| Best fit | Routine implementation and debugging | Ambiguous decisions, reviews and competing designs |
+| Cost and latency | Usually one model request | One request per slot per round |
+| Write behavior | Copilot invokes editing tools directly | TUI protocols enforce one writer; MCP protocols are read-only |
+
+```text
+GitHub Copilot -> MCP -> Fusion Harness -> Pi children -> Copilot model endpoints
+```
+
+Changing the model in Copilot replaces the active model. Calling Fusion asks several models independently
+and preserves their evidence and disagreement. Multi-model agreement is useful evidence, not proof.
 
 ## Model stack configuration
 
