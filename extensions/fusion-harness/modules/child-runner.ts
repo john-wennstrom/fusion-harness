@@ -44,6 +44,18 @@ export function piInvocation(args: string[]): { command: string; args: string[] 
 	return { command: "pi", args };
 }
 
+/**
+ * Windows CreateProcess rejects command lines beyond 32,767 chars with ENAMETOOLONG.
+ * When a prompt would blow that budget, drop it into prompt.md under the child's
+ * session dir and return the "@<abs>" loader token pi ingests as the initial message.
+ */
+function spillPromptToFile(sessionDir: string, prompt: string): string {
+	fs.mkdirSync(sessionDir, { recursive: true });
+	const file = path.join(sessionDir, "prompt.md");
+	fs.writeFileSync(file, prompt, "utf8");
+	return `@${file}`;
+}
+
 function extensionEntryFromRoot(root: string): string | undefined {
 	try {
 		const pkgPath = path.join(root, "package.json");
@@ -134,7 +146,13 @@ export function runChild(opts: {
 	for (const extension of runtime.extensions) args.push("-e", resolveChildExtensionSource(extension));
 	if (opts.access === "none") args.push("--no-tools");
 	else args.push("--tools", runtime.tools.join(","));
-	args.push(opts.prompt);
+	// Windows' CreateProcess caps the whole command line at 32,767 chars (spawn ENAMETOOLONG).
+	// /fh-fusion merge prompts pack up to ~60 KB of source excerpts into a single arg, so spill
+	// oversized prompts to prompt.md in sessionDir and hand pi its @<path> loader instead.
+	const promptArg = process.platform === "win32" && opts.prompt.length > 24_000
+		? spillPromptToFile(opts.sessionDir, opts.prompt)
+		: opts.prompt;
+	args.push(promptArg);
 
 	return new Promise<AgentRun>((resolve) => {
 		const started = Date.now();
